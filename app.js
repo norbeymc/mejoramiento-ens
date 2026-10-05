@@ -7,6 +7,34 @@ const SB = supabase.createClient(CFG.url, CFG.key);
 const NIV = { 1: 'Existencia', 2: 'Pertinencia', 3: 'Apropiación', 4: 'Mejoramiento continuo' };
 const S = { user: null, profile: null, miembros: [], ciclos: [], ciclo: null, areas: [], procesos: [], comps: [], descs: {}, fuentes: [], perfiles: [] };
 
+
+/* ---------- Datos institucionales (completar los vacíos; los vacíos no se muestran) ---------- */
+const INST = {
+  nombre: 'Escuela Normal Superior San Bernardo',
+  nombreLegal: 'Institución Educativa Escuela Normal Superior',
+  lema: 'Educando para la vida con libertad y autonomía',
+  municipio: 'San Bernardo', departamento: 'Cundinamarca', provincia: 'Sumapaz',
+  entidad: 'Secretaría de Educación de Cundinamarca', nucleo: '100',
+  dane: '125649000015', icfes: '00911-8', nit: '',
+  resolucion: 'Acreditación de calidad y desarrollo Res. 7012 del 6-ago-2010; PFC Res. 000474 del 23-ene-2019',
+  rector: 'Edwin Alveiro Niño Castiblanco',
+  direccion: 'Km 1 vía La Unchía, vereda San Miguel',
+  telefono: '3213609037', correo: 'iednormalsuperior_sanbernardo@secundinamarca.edu.co', web: ''
+};
+const instLines = () => [
+  INST.dane && ['DANE', INST.dane], INST.icfes && ['ICFES', INST.icfes], INST.nit && ['NIT', INST.nit],
+  INST.resolucion && ['Resolución', INST.resolucion],
+  (INST.municipio || INST.departamento) && ['Ubicación', [INST.municipio, INST.provincia && 'Prov. ' + INST.provincia, INST.departamento].filter(Boolean).join(', ')],
+  INST.entidad && ['Entidad territorial', INST.entidad],
+  INST.direccion && ['Dirección', INST.direccion], INST.telefono && ['Teléfono', INST.telefono],
+  INST.correo && ['Correo', INST.correo], INST.rector && ['Rector', INST.rector]
+].filter(Boolean);
+const instHtml = () => instLines().map(([k, v]) => `<span><b>${k}:</b> ${esc(v)}</span>`).join(' · ');
+const printHead = titulo => `<div class="printonly"><img src="logo.png" alt=""><div><b style="font-size:1.2rem">${esc(INST.nombre)}</b><br>${esc(titulo)} · ${esc(S.ciclo?.nombre || '')}<br><span style="font-size:.85rem">${instHtml()}</span></div></div>`;
+function renderFoot() {
+  $('#foot').innerHTML = `<img src="logo.png" alt="Escudo"><div><b>${esc(INST.nombre)}</b> · ${esc(INST.lema)}<br>${instHtml() || '<span>Autoevaluación y plan de mejoramiento institucional · Guía 34 del Ministerio de Educación Nacional</span>'}</div>`;
+}
+
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -77,8 +105,9 @@ async function start() {
 /* ---------- autenticación ---------- */
 function showAuth() {
   $('#app').innerHTML = `<div class="auth card">
+    <img class="authlogo" src="logo.png" alt="Escudo de la ${esc(INST.nombre)}">
     <h1>Mejoramiento institucional</h1>
-    <p class="muted">Escuela Normal Superior San Bernardo · autoevaluación y plan de mejoramiento (Guía 34, MEN).</p>
+    <p class="muted lema">${esc(INST.nombre)} · ${esc(INST.lema)}<br>Autoevaluación y plan de mejoramiento (Guía 34, MEN).</p>
     <form data-form="login">
       <label for="a-nom" id="l-nom" hidden>Nombre completo</label><input id="a-nom" autocomplete="name" hidden>
       <label for="a-mail">Correo</label><input id="a-mail" type="email" autocomplete="email" required>
@@ -107,7 +136,7 @@ async function doAuth() {
   }
 }
 function showPending() {
-  $('#app').innerHTML = `<div class="auth card"><h1>Cuenta pendiente</h1>
+  $('#app').innerHTML = `<div class="auth card"><img class="authlogo" src="logo.png" alt="Escudo"><h1>Cuenta pendiente</h1>
     <p>Tu cuenta (<b>${esc(S.user.email)}</b>) ya existe. El rector o un administrador debe activarla y asignarte a un equipo de gestión.</p>
     <button data-act="logout">Salir</button> <button data-act="reload">Ya me activaron</button></div>`;
 }
@@ -237,7 +266,7 @@ async function vPerfil() {
   window.__csv = csv;
   const all = S.comps.map(c => c.id);
   const dist = [1, 2, 3, 4].map(k => all.filter(id => lvl(id) === k).length);
-  return `<h1>Perfil institucional</h1>
+  return `${printHead('Perfil institucional')}<h1>Perfil institucional</h1>
     <p class="muted">Se genera solo a partir de los consensos (Anexo 2 de la guía). ${prev ? `Se compara con “${esc(prev.nombre)}”.` : 'Sin ciclo anterior para comparar.'}</p>
     <div class="row noprint" style="margin-bottom:12px"><div class="fit"><button data-act="csv">Descargar CSV</button></div><div class="fit"><button data-act="print">Imprimir / PDF</button></div></div>
     <div class="grid g4" style="margin-bottom:14px">${dist.map((n, i) => `<div class="card"><span class="badge b${i + 1}">${i + 1} · ${NIV[i + 1]}</span><div class="kpi">${n}</div><span class="muted small">de ${all.length} componentes</span></div>`).join('')}</div>
@@ -300,7 +329,7 @@ async function vPmi(arg) {
         <div class="row"><div><label>Indicador asociado</label><select id="ac-x-${m.id}"><option value="">—</option>${mi.map(i => `<option value="${i.id}">${esc(i.nombre)}</option>`).join('')}</select></div><div><label>Costo estimado (COP)</label><input type="number" min="0" id="ac-c-${m.id}" value="0"></div><div><label>Fuente</label><select id="ac-s-${m.id}"><option value="">—</option><option>FSE</option><option>otra</option></select></div></div>
         <button class="primary" data-act="add-acc" data-m="${m.id}" style="margin-top:8px">Guardar acción</button></details>` : ''}</div>`;
   }).join('');
-  return `<h1>Plan de mejoramiento ${yr}</h1>${areaTabs('pmi', aid)}
+  return `${printHead('Plan de mejoramiento')}<h1>Plan de mejoramiento ${yr}</h1>${areaTabs('pmi', aid)}
     <p class="muted">${esc(S.areas.find(a => a.id === aid).nombre)} · Una oportunidad priorizada → un objetivo → metas medibles → indicadores y acciones con responsable, plazo y presupuesto.</p>
     <div class="row noprint" style="margin-bottom:10px"><div class="fit"><button data-act="print">Imprimir / PDF</button></div></div>
     <div class="card"><h2>A. Factor crítico (urgencia + tendencia + impacto)</h2>
@@ -486,4 +515,5 @@ document.addEventListener('submit', async e => {
 });
 $('#salir').addEventListener('click', () => ACT.logout());
 $('#cicloSel').addEventListener('change', e => { S.ciclo = S.ciclos.find(c => c.id === +e.target.value); lsSet('cicloId', S.ciclo.id); route(); });
+renderFoot();
 boot();
