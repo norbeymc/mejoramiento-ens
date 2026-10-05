@@ -110,7 +110,7 @@ async function start() {
 /* ---------- ingreso del equipo (sin cuentas) ---------- */
 const brandHead = () => `<img class="authlogo" src="logo.png" alt="Escudo de la ${esc(INST.nombre)}">
     <h1>Mejoramiento institucional</h1>
-    <p class="muted lema">${esc(INST.nombre)} · ${esc(INST.lema)}<br>Autoevaluación y plan de mejoramiento (Guía 34, MEN).</p>`;
+`;
 async function showSetup() {
   $('#app').innerHTML = `<div class="auth card">${brandHead()}<p class="muted">Cargando…</p></div>`;
   let areas;
