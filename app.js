@@ -5,7 +5,7 @@ const CFG = {
 };
 const SB = supabase.createClient(CFG.url, CFG.key);
 const NIV = { 1: 'Existencia', 2: 'Pertinencia', 3: 'Apropiación', 4: 'Mejoramiento continuo' };
-const S = { user: null, profile: null, miembros: [], ciclos: [], ciclo: null, areas: [], procesos: [], comps: [], descs: {}, fuentes: [], perfiles: [] };
+const S = { user: null, profile: null, miembros: [], ciclos: [], ciclo: null, areas: [], procesos: [], comps: [], descs: {}, fuentes: [], integrantes: [] };
 
 
 /* ---------- Datos institucionales (completar los vacíos; los vacíos no se muestran) ---------- */
@@ -60,7 +60,7 @@ const myAreas = () => S.miembros.filter(m => m.user_id === S.user.id).map(m => m
 const canArea = a => isAdmin() || myAreas().includes(a);
 const isCoord = a => isAdmin() || S.miembros.some(m => m.user_id === S.user.id && m.area_id === a && m.es_coordinador);
 const areaOf = compId => S.procesos.find(p => p.id === S.comps.find(c => c.id === compId).proceso_id).area_id;
-const userName = id => S.perfiles.find(p => p.id === id)?.nombre || '—';
+const equipoDe = a => S.integrantes.filter(i => i.area_id === a);
 const defaultArea = () => myAreas()[0] || 1;
 const badge = (n, txt) => `<span class="badge b${n || 0}">${n ? n + ' · ' + NIV[n] : (txt || 'Sin valorar')}</span>`;
 
@@ -69,19 +69,23 @@ async function boot() {
   const { data } = await SB.auth.getSession();
   S.user = data.session?.user || null;
   SB.auth.onAuthStateChange((ev, ses) => {
-    const had = !!S.user; S.user = ses?.user || null;
-    if (ev === 'SIGNED_OUT' || (had !== !!S.user)) start();
+    const prev = S.user?.id; S.user = ses?.user || null;
+    if (ev === 'SIGNED_OUT' || prev !== S.user?.id) start();
   });
   await start();
   window.addEventListener('hashchange', route);
 }
 async function start() {
   $('#top').hidden = true;
-  if (!S.user) return showAuth();
+  if (!S.user) {
+    const { error } = await SB.auth.signInAnonymously();
+    if (error) return showAuth(error.message);
+    return; /* el cambio de sesión vuelve a llamar start() */
+  }
   try {
     S.profile = (await q(SB.from('profiles').select('*').eq('id', S.user.id)))[0];
-    if (!S.profile?.activo) return showPending();
-    const [areas, procesos, comps, descs, fuentes, ciclos, miembros, perfiles] = await Promise.all([
+    if (!S.profile?.activo) return showSetup();
+    const [areas, procesos, comps, descs, fuentes, ciclos, miembros, integrantes] = await Promise.all([
       q(SB.from('areas').select('*').order('id')),
       q(SB.from('procesos').select('*').order('id')),
       q(SB.from('componentes').select('*').order('id')),
@@ -89,56 +93,65 @@ async function start() {
       q(SB.from('fuentes_evidencia').select('*')),
       q(SB.from('ciclos').select('*').order('anio', { ascending: false })),
       q(SB.from('equipo_miembros').select('*')),
-      q(SB.from('profiles').select('id,nombre,email,rol,activo').order('nombre'))
+      q(SB.from('integrantes').select('*').order('id'))
     ]);
-    Object.assign(S, { areas, procesos, comps, fuentes, ciclos, miembros, perfiles });
+    Object.assign(S, { areas, procesos, comps, fuentes, ciclos, miembros, integrantes });
     S.descs = {}; descs.forEach(d => { (S.descs[d.componente_id] ||= {})[d.nivel] = d.texto; });
     const saved = +lsGet('cicloId');
     S.ciclo = ciclos.find(c => c.id === saved) || ciclos[0] || null;
     $('#top').hidden = false;
-    $('#who').textContent = S.profile.nombre || S.profile.email;
+    $('#who').textContent = S.profile.nombre || S.profile.email || '';
+    $('#salir').textContent = S.profile.email ? 'Salir' : 'Cambiar de equipo';
     $('#cicloSel').innerHTML = ciclos.map(c => `<option value="${c.id}" ${S.ciclo?.id === c.id ? 'selected' : ''}>${esc(c.nombre)}</option>`).join('');
     route();
   } catch (e) { $('#app').innerHTML = `<div class="err">${esc(e.message)}</div>`; }
 }
 
-/* ---------- autenticación ---------- */
-function showAuth() {
-  $('#app').innerHTML = `<div class="auth card">
-    <img class="authlogo" src="logo.png" alt="Escudo de la ${esc(INST.nombre)}">
+/* ---------- ingreso del equipo (sin cuentas) ---------- */
+const brandHead = () => `<img class="authlogo" src="logo.png" alt="Escudo de la ${esc(INST.nombre)}">
     <h1>Mejoramiento institucional</h1>
-    <p class="muted lema">${esc(INST.nombre)} · ${esc(INST.lema)}<br>Autoevaluación y plan de mejoramiento (Guía 34, MEN).</p>
-    <form data-form="login">
-      <label for="a-nom" id="l-nom" hidden>Nombre completo</label><input id="a-nom" autocomplete="name" hidden>
-      <label for="a-mail">Correo</label><input id="a-mail" type="email" autocomplete="email" required>
-      <label for="a-pass">Contraseña</label><input id="a-pass" type="password" autocomplete="current-password" minlength="8" required>
-      <div id="a-msg" style="margin-top:10px"></div>
-      <div class="row" style="margin-top:12px"><button class="primary" id="a-go">Ingresar</button><button type="button" data-act="auth-mode" id="a-sw">Crear cuenta</button></div>
-    </form></div>`;
+    <p class="muted lema">${esc(INST.nombre)} · ${esc(INST.lema)}<br>Autoevaluación y plan de mejoramiento (Guía 34, MEN).</p>`;
+async function showSetup() {
+  $('#app').innerHTML = `<div class="auth card">${brandHead()}<p class="muted">Cargando…</p></div>`;
+  let areas;
+  try { areas = await q(SB.rpc('areas_inicio')); }
+  catch (e) { return showAuth(e.message); }
+  $('#app').innerHTML = `<div class="auth card">${brandHead()}
+    <label for="su-area">1. Área de gestión de su equipo</label>
+    <select id="su-area"><option value="">Elija el área…</option>${areas.map(a => `<option value="${a.id}">${esc(a.nombre)}</option>`).join('')}</select>
+    <label for="su-nom">2. Docentes integrantes del equipo (uno por línea)</label>
+    <textarea id="su-nom" rows="6" placeholder="Nombre Apellido&#10;Nombre Apellido"></textarea>
+    <label>3. Líder del equipo</label>
+    <div id="su-lid" class="small muted">Escriba los integrantes para elegir al líder.</div>
+    <div id="a-msg" style="margin-top:10px"></div>
+    <div class="row" style="margin-top:12px"><button class="primary" data-act="su-go" id="su-go">Comenzar autoevaluación</button></div>
+    <p class="small" style="margin-top:14px;text-align:center"><a href="#" data-act="admin-login">Acceso de administrador</a></p>
+  </div>`;
 }
-let authMode = 'login';
-function authSwitch() {
-  authMode = authMode === 'login' ? 'signup' : 'login';
-  const s = authMode === 'signup';
-  $('#a-nom').hidden = !s; $('#l-nom').hidden = !s; $('#a-nom').required = s;
-  $('#a-go').textContent = s ? 'Crear cuenta' : 'Ingresar'; $('#a-sw').textContent = s ? 'Ya tengo cuenta' : 'Crear cuenta';
+function suLideres(sel) {
+  const nombres = [...new Set(val('su-nom').split('\n').map(x => x.trim()).filter(Boolean))];
+  sel = sel ?? document.querySelector('input[name="su-lider"]:checked')?.value;
+  $('#su-lid').innerHTML = nombres.length
+    ? nombres.map(n => `<label class="opt ${n === sel ? 'sel' : ''}" style="margin:4px 0"><input type="radio" name="su-lider" value="${esc(n)}" ${n === sel ? 'checked' : ''}><div><b>${esc(n)}</b></div></label>`).join('')
+    : 'Escriba los integrantes para elegir al líder.';
+}
+function showAuth(err) {
+  const off = err && /anonymous/i.test(err);
+  $('#app').innerHTML = `<div class="auth card">${brandHead()}
+    ${err ? `<div class="err">${esc(off ? 'Falta activar el ingreso anónimo en Supabase (Authentication → Sign In / Providers → Allow anonymous sign-ins).' : err)}</div>` : ''}
+    <h3 style="margin-top:14px">Acceso de administrador</h3>
+    <form data-form="login">
+      <label for="a-mail">Correo</label><input id="a-mail" type="email" autocomplete="email" required>
+      <label for="a-pass">Contraseña</label><input id="a-pass" type="password" autocomplete="current-password" required>
+      <div id="a-msg" style="margin-top:10px"></div>
+      <div class="row" style="margin-top:12px"><button class="primary" id="a-go">Ingresar</button><button type="button" data-act="reload">Volver</button></div>
+    </form></div>`;
 }
 async function doAuth() {
   const email = val('a-mail'), password = $('#a-pass').value, msg = $('#a-msg');
   msg.innerHTML = '';
-  if (authMode === 'login') {
-    const { error } = await SB.auth.signInWithPassword({ email, password });
-    if (error) msg.innerHTML = `<div class="err">${esc(error.message.includes('Invalid') ? 'Correo o contraseña incorrectos.' : error.message)}</div>`;
-  } else {
-    const { data, error } = await SB.auth.signUp({ email, password, options: { data: { nombre: val('a-nom') } } });
-    if (error) msg.innerHTML = `<div class="err">${esc(error.message)}</div>`;
-    else if (!data.session) msg.innerHTML = '<div class="ok">Cuenta creada. Revisa tu correo para confirmarla y luego ingresa.</div>';
-  }
-}
-function showPending() {
-  $('#app').innerHTML = `<div class="auth card"><img class="authlogo" src="logo.png" alt="Escudo"><h1>Cuenta pendiente</h1>
-    <p>Tu cuenta (<b>${esc(S.user.email)}</b>) ya existe. El rector o un administrador debe activarla y asignarte a un equipo de gestión.</p>
-    <button data-act="logout">Salir</button> <button data-act="reload">Ya me activaron</button></div>`;
+  const { error } = await SB.auth.signInWithPassword({ email, password });
+  if (error) msg.innerHTML = `<div class="err">${esc(error.message.includes('Invalid') ? 'Correo o contraseña incorrectos.' : error.message)}</div>`;
 }
 
 /* ---------- router ---------- */
@@ -164,8 +177,7 @@ const stepper = () => {
 /* ---------- INICIO ---------- */
 async function vInicio() {
   const cid = S.ciclo.id;
-  const [val, cons, opor, obj, acc] = await Promise.all([
-    q(SB.from('valoraciones').select('componente_id,user_id').eq('ciclo_id', cid)),
+  const [cons, opor, obj, acc] = await Promise.all([
     q(SB.from('consensos').select('componente_id').eq('ciclo_id', cid)),
     q(SB.from('fortalezas_oportunidades').select('area_id,tipo,priorizada').eq('ciclo_id', cid)),
     q(SB.from('objetivos').select('id,area_id').eq('ciclo_id', cid)),
@@ -173,16 +185,14 @@ async function vInicio() {
   ]);
   const cards = S.areas.map(a => {
     const cs = areaComps(a.id), ids = new Set(cs.map(c => c.id));
-    const conVal = new Set(val.filter(v => ids.has(v.componente_id)).map(v => v.componente_id)).size;
     const conCons = cons.filter(c => ids.has(c.componente_id)).length;
     const ac = acc.filter(x => x.metas.objetivos.area_id === a.id);
     const avance = ac.length ? Math.round(ac.reduce((s, x) => s + x.avance, 0) / ac.length) : 0;
-    const eq = S.miembros.filter(m => m.area_id === a.id).map(m => userName(m.user_id) + (m.es_coordinador ? ' (coord.)' : ''));
+    const eq = equipoDe(a.id).map(i => i.nombre + (i.es_lider ? ' (líder)' : ''));
     const pct = (n, t) => t ? Math.round(100 * n / t) : 0;
     return `<div class="card"><h3>${esc(a.nombre)}</h3>
       <p class="small muted">${eq.length ? esc(eq.join(' · ')) : 'Sin integrantes asignados'}</p>
-      <p class="small" style="margin:.5rem 0 .2rem">Valoradas: <b>${conVal}/${cs.length}</b></p><div class="bar"><i style="width:${pct(conVal, cs.length)}%"></i></div>
-      <p class="small" style="margin:.5rem 0 .2rem">Con consenso: <b>${conCons}/${cs.length}</b></p><div class="bar"><i style="width:${pct(conCons, cs.length)}%"></i></div>
+      <p class="small" style="margin:.5rem 0 .2rem">Componentes con nivel acordado: <b>${conCons}/${cs.length}</b></p><div class="bar"><i style="width:${pct(conCons, cs.length)}%"></i></div>
       <p class="small" style="margin:.5rem 0 .2rem">Oportunidades priorizadas: <b>${opor.filter(o => o.area_id === a.id && o.tipo === 'oportunidad' && o.priorizada).length}</b> · Objetivo: <b>${obj.some(o => o.area_id === a.id) ? 'definido' : 'pendiente'}</b></p>
       <p class="small" style="margin:.5rem 0 .2rem">Avance de acciones (${ac.length}): <b>${avance}%</b></p><div class="bar"><i style="width:${avance}%"></i></div>
       <div class="row noprint" style="margin-top:12px"><a class="btn" href="#/autoevaluacion/${a.id}">Autoevaluar</a><a class="btn" href="#/pmi/${a.id}">Plan</a></div></div>`;
@@ -196,82 +206,72 @@ async function vInicio() {
 async function vAuto(arg) {
   const aid = +arg || defaultArea(), area = S.areas.find(a => a.id === aid), cid = S.ciclo.id;
   const comps = areaComps(aid), ids = comps.map(c => c.id);
-  const [vals, cons, evid] = await Promise.all([
-    q(SB.from('valoraciones').select('*').eq('ciclo_id', cid).in('componente_id', ids)),
+  const [cons, evid] = await Promise.all([
     q(SB.from('consensos').select('*').eq('ciclo_id', cid).in('componente_id', ids)),
     q(SB.from('evidencias').select('*').eq('ciclo_id', cid).in('componente_id', ids).order('created_at'))
   ]);
-  const edit = canArea(aid), coord = isCoord(aid);
+  const edit = canArea(aid);
   const body = S.procesos.filter(p => p.area_id === aid).map(p => {
     const fu = S.fuentes.filter(f => f.proceso_id === p.id);
     const cards = comps.filter(c => c.proceso_id === p.id).map(c => {
-      const vs = vals.filter(v => v.componente_id === c.id), mine = vs.find(v => v.user_id === S.user.id);
       const con = cons.find(x => x.componente_id === c.id), ev = evid.filter(e => e.componente_id === c.id);
-      const avg = vs.length ? (vs.reduce((s, v) => s + v.nivel, 0) / vs.length) : null;
       const warn = con && con.nivel >= 3 && !ev.length ? '<span class="badge bw">Sin evidencia</span>' : '';
       return `<details class="comp" id="comp-${c.id}">
-        <summary><span class="t"><b>${c.orden}.</b> ${esc(c.nombre)}</span>${warn}${mine ? `<span class="badge b${mine.nivel}">Yo: ${mine.nivel}</span>` : ''}${badge(con?.nivel, 'Sin consenso')}</summary>
+        <summary><span class="t"><b>${c.orden}.</b> ${esc(c.nombre)}</span>${warn}${badge(con?.nivel, 'Sin definir')}</summary>
         <div class="comp-body">
-          <h3>Mi valoración</h3>
-          <div class="opts">${[1, 2, 3, 4].map(n => `<label class="opt ${mine?.nivel === n ? 'sel' : ''}"><input type="radio" name="n-${c.id}" value="${n}" ${mine?.nivel === n ? 'checked' : ''} ${edit ? '' : 'disabled'}><div><b>${n} · ${NIV[n]}</b><span>${esc(S.descs[c.id]?.[n])}</span></div></label>`).join('')}</div>
-          <label for="j-${c.id}">Justificación (¿en qué te basas?)</label>
-          <textarea id="j-${c.id}" ${edit ? '' : 'disabled'}>${esc(mine?.justificacion)}</textarea>
-          ${edit ? `<div style="margin-top:8px"><button class="primary" data-act="save-val" data-c="${c.id}">Guardar mi valoración</button></div>` : '<p class="small muted">Solo lectura: no perteneces a este equipo.</p>'}
-          <h3 style="margin-top:18px">Valoraciones del equipo ${avg ? `<span class="muted small">· promedio ${avg.toFixed(1)}</span>` : ''}</h3>
-          ${vs.length ? `<ul class="list small">${vs.map(v => `<li><b>${esc(userName(v.user_id))}</b> ${badge(v.nivel)}<br><span class="muted">${esc(v.justificacion) || 'Sin justificación'}</span></li>`).join('')}</ul>` : '<p class="small muted">Aún nadie ha valorado.</p>'}
-          <h3 style="margin-top:18px">Consenso del equipo</h3>
-          ${coord ? `<div class="row"><div class="fit"><select id="cn-${c.id}"><option value="">Nivel…</option>${[1, 2, 3, 4].map(n => `<option value="${n}" ${con?.nivel === n ? 'selected' : ''}>${n} · ${NIV[n]}</option>`).join('')}</select></div><div><input id="cj-${c.id}" placeholder="Justificación del consenso" value="${esc(con?.justificacion)}"></div><div class="fit"><button class="primary" data-act="save-cons" data-c="${c.id}">Guardar consenso</button></div></div>
-            ${con ? `<button class="ghost danger small" data-act="del-cons" data-c="${c.id}">Quitar consenso</button>` : ''}`
-          : (con ? `<p>${badge(con.nivel)} <span class="muted small">${esc(con.justificacion)}</span></p>` : '<p class="small muted">El coordinador del equipo registra el consenso.</p>')}
+          <h3>Nivel acordado por el equipo</h3>
+          <div class="opts">${[1, 2, 3, 4].map(n => `<label class="opt ${con?.nivel === n ? 'sel' : ''}"><input type="radio" name="n-${c.id}" value="${n}" ${con?.nivel === n ? 'checked' : ''} ${edit ? '' : 'disabled'}><div><b>${n} · ${NIV[n]}</b><span>${esc(S.descs[c.id]?.[n])}</span></div></label>`).join('')}</div>
+          <label for="cj-${c.id}">Justificación (¿en qué se basa el equipo?)</label>
+          <textarea id="cj-${c.id}" ${edit ? '' : 'disabled'}>${esc(con?.justificacion)}</textarea>
+          ${edit ? `<div style="margin-top:8px"><button class="primary" data-act="save-cons" data-c="${c.id}">Guardar nivel acordado</button> ${con ? `<button class="ghost danger small" data-act="del-cons" data-c="${c.id}">Quitar</button>` : ''}</div>` : '<p class="small muted">Solo lectura: no perteneces a este equipo.</p>'}
           <h3 style="margin-top:18px">Evidencias</h3>
-          ${ev.length ? `<ul class="list small">${ev.map(e => `<li><b>${esc(e.titulo)}</b> ${e.url ? `· <a href="${esc(e.url)}" target="_blank" rel="noopener">abrir</a>` : ''} <span class="muted">· ${esc(userName(e.subida_por))}</span><br><span class="muted">${esc(e.descripcion)}</span> ${edit ? `<button class="ghost danger small" data-act="del-ev" data-e="${e.id}">Eliminar</button>` : ''}</li>`).join('')}</ul>` : '<p class="small muted">Sin evidencias registradas.</p>'}
+          ${ev.length ? `<ul class="list small">${ev.map(e => `<li><b>${esc(e.titulo)}</b> ${e.url ? `· <a href="${esc(e.url)}" target="_blank" rel="noopener">abrir</a>` : ''}<br><span class="muted">${esc(e.descripcion)}</span> ${edit ? `<button class="ghost danger small" data-act="del-ev" data-e="${e.id}">Eliminar</button>` : ''}</li>`).join('')}</ul>` : '<p class="small muted">Sin evidencias registradas.</p>'}
           ${edit ? `<div class="row"><div><input id="et-${c.id}" placeholder="Título de la evidencia"></div><div><input id="eu-${c.id}" type="url" placeholder="Enlace (Drive, sitio…)"></div></div><textarea id="ed-${c.id}" placeholder="Descripción breve" style="min-height:48px;margin-top:6px"></textarea><button data-act="add-ev" data-c="${c.id}" style="margin-top:6px">Agregar evidencia</button>` : ''}
         </div></details>`;
     }).join('');
     return `<section class="card"><h2>${esc(p.nombre)}</h2>${fu.length ? `<details class="small"><summary class="muted" style="cursor:pointer">Fuentes de evidencia sugeridas (Anexo 3 de la guía)</summary><ul>${fu.map(f => `<li><b>${esc(f.fuente)}:</b> ${esc(f.ejemplo)}</li>`).join('')}</ul></details>` : ''}${cards}</section>`;
   }).join('');
-  const done = cons.length;
+  const done = cons.length, eq = equipoDe(aid);
   return `<h1>Autoevaluación</h1>${areaTabs('autoevaluacion', aid)}
-    <p class="muted">${esc(area.nombre)} · ${done}/${comps.length} componentes con consenso. Cada integrante valora de 1 a 4 con justificación; el coordinador registra el consenso. Valorar en 3 o 4 requiere evidencia.</p>${body}`;
+    <p class="muted">${esc(area.nombre)} · ${done}/${comps.length} componentes con nivel acordado.${eq.length ? ` Equipo: ${esc(eq.map(i => i.nombre + (i.es_lider ? ' (líder)' : '')).join(' · '))}.` : ''}</p>
+    <p class="muted small">Para cada componente, lean los cuatro descriptores, acuerden el nivel (1 a 4) y justifíquenlo. Los niveles 3 y 4 requieren evidencia.</p>${body}`;
 }
 
 /* ---------- PERFIL INSTITUCIONAL (Anexo 2) ---------- */
 async function vPerfil() {
   const cid = S.ciclo.id;
   const prev = S.ciclos.filter(c => c.anio < S.ciclo.anio).sort((a, b) => b.anio - a.anio)[0];
-  const [cons, vals, evid, pcons] = await Promise.all([
+  const [cons, evid, pcons] = await Promise.all([
     q(SB.from('consensos').select('*').eq('ciclo_id', cid)),
-    q(SB.from('valoraciones').select('componente_id,nivel').eq('ciclo_id', cid)),
     q(SB.from('evidencias').select('componente_id').eq('ciclo_id', cid)),
     prev ? q(SB.from('consensos').select('*').eq('ciclo_id', prev.id)) : Promise.resolve([])
   ]);
   const lvl = id => cons.find(c => c.componente_id === id)?.nivel || 0;
   const ant = id => pcons.find(c => c.componente_id === id)?.nivel || 0;
-  const avg = id => { const v = vals.filter(x => x.componente_id === id); return v.length ? (v.reduce((s, x) => s + x.nivel, 0) / v.length).toFixed(1) : '—'; };
   const mark = (n, k) => `<td class="c ${n === k ? 'l' + k : ''}">${n === k ? '●' : ''}</td>`;
-  const sumRow = (label, list) => `<tr class="tot"><td colspan="2">${label}</td>${[1, 2, 3, 4].map(k => `<td class="c">${list.filter(id => lvl(id) === k).length}</td>`).join('')}<td colspan="3" class="small">${list.filter(id => lvl(id)).length}/${list.length} valorados</td></tr>`;
-  let csv = 'Área;Proceso;Componente;Consenso;Promedio equipo;Evidencias;Ciclo anterior\n';
+  const sumRow = (label, list) => `<tr class="tot"><td colspan="2">${label}</td>${[1, 2, 3, 4].map(k => `<td class="c">${list.filter(id => lvl(id) === k).length}</td>`).join('')}<td colspan="2" class="small">${list.filter(id => lvl(id)).length}/${list.length} valorados</td></tr>`;
+  let csv = 'Área;Proceso;Componente;Nivel acordado;Evidencias;Ciclo anterior\n';
   const rows = S.areas.map(a => {
     const aIds = areaComps(a.id).map(c => c.id);
     const inner = S.procesos.filter(p => p.area_id === a.id).map(p => {
       const cs = S.comps.filter(c => c.proceso_id === p.id);
       return cs.map((c, i) => {
-        csv += [a.nombre, p.nombre, c.nombre, lvl(c.id) || '', avg(c.id), evid.filter(e => e.componente_id === c.id).length, ant(c.id) || ''].map(x => `"${String(x).replace(/"/g, '""')}"`).join(';') + '\n';
+        csv += [a.nombre, p.nombre, c.nombre, lvl(c.id) || '', evid.filter(e => e.componente_id === c.id).length, ant(c.id) || ''].map(x => `"${String(x).replace(/"/g, '""')}"`).join(';') + '\n';
         const d = lvl(c.id) && ant(c.id) ? lvl(c.id) - ant(c.id) : null;
-        return `<tr>${i === 0 ? `<td rowspan="${cs.length + 1}" style="width:22%">${esc(p.nombre)}</td>` : ''}<td>${esc(c.nombre)}</td>${[1, 2, 3, 4].map(k => mark(lvl(c.id), k)).join('')}<td class="c">${avg(c.id)}</td><td class="c">${evid.filter(e => e.componente_id === c.id).length}</td><td class="c">${d === null ? '—' : (d > 0 ? '▲ +' + d : d < 0 ? '▼ ' + d : '=')}</td></tr>`;
+        return `<tr>${i === 0 ? `<td rowspan="${cs.length + 1}" style="width:22%">${esc(p.nombre)}</td>` : ''}<td>${esc(c.nombre)}</td>${[1, 2, 3, 4].map(k => mark(lvl(c.id), k)).join('')}<td class="c">${evid.filter(e => e.componente_id === c.id).length}</td><td class="c">${d === null ? '—' : (d > 0 ? '▲ +' + d : d < 0 ? '▼ ' + d : '=')}</td></tr>`;
       }).join('') + sumRow('Total proceso', cs.map(c => c.id)).replace('<tr class="tot"><td colspan="2">', '<tr class="tot"><td>');
     }).join('');
-    return `<tr><th colspan="9">${esc(a.nombre.toUpperCase())}</th></tr>${inner}${sumRow('TOTAL ÁREA', aIds).replace('<td colspan="2">', '<td colspan="2" style="text-align:right">')}`;
+    return `<tr><th colspan="8">${esc(a.nombre.toUpperCase())}</th></tr>${inner}${sumRow('TOTAL ÁREA', aIds).replace('<td colspan="2">', '<td colspan="2" style="text-align:right">')}`;
   }).join('');
   window.__csv = csv;
   const all = S.comps.map(c => c.id);
   const dist = [1, 2, 3, 4].map(k => all.filter(id => lvl(id) === k).length);
   return `${printHead('Perfil institucional')}<h1>Perfil institucional</h1>
-    <p class="muted">Se genera solo a partir de los consensos (Anexo 2 de la guía). ${prev ? `Se compara con “${esc(prev.nombre)}”.` : 'Sin ciclo anterior para comparar.'}</p>
+    <p class="muted">Se genera solo a partir de los niveles acordados por los equipos (Anexo 2 de la guía). ${prev ? `Se compara con “${esc(prev.nombre)}”.` : 'Sin ciclo anterior para comparar.'}</p>
     <div class="row noprint" style="margin-bottom:12px"><div class="fit"><button data-act="csv">Descargar CSV</button></div><div class="fit"><button data-act="print">Imprimir / PDF</button></div></div>
     <div class="grid g4" style="margin-bottom:14px">${dist.map((n, i) => `<div class="card"><span class="badge b${i + 1}">${i + 1} · ${NIV[i + 1]}</span><div class="kpi">${n}</div><span class="muted small">de ${all.length} componentes</span></div>`).join('')}</div>
-    <div class="tw"><table><thead><tr><th>Proceso</th><th>Componente</th>${[1, 2, 3, 4].map(k => `<th class="c" title="${NIV[k]}">${k}</th>`).join('')}<th>Prom.</th><th>Evid.</th><th>Δ</th></tr></thead><tbody>${rows}</tbody></table></div>
-    <p class="small muted">1 Existencia · 2 Pertinencia · 3 Apropiación · 4 Mejoramiento continuo. Prom. = promedio de valoraciones individuales; Δ = cambio frente al ciclo anterior.</p>`;
+    <div class="tw"><table><thead><tr><th>Proceso</th><th>Componente</th>${[1, 2, 3, 4].map(k => `<th class="c" title="${NIV[k]}">${k}</th>`).join('')}<th>Evid.</th><th>Δ</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <p class="small muted">1 Existencia · 2 Pertinencia · 3 Apropiación · 4 Mejoramiento continuo. Δ = cambio frente al ciclo anterior.</p>`;
 }
 
 /* ---------- FORTALEZAS Y OPORTUNIDADES ---------- */
@@ -323,9 +323,9 @@ async function vPmi(arg) {
         <div class="row"><div><label>Fuente de datos</label><input id="in-s-${m.id}"></div><div><label>Periodicidad</label><input id="in-p-${m.id}" placeholder="Mensual, bimestral…"></div><div><label>Responsable</label><input id="in-r-${m.id}"></div><div><label>Meta (valor)</label><input id="in-v-${m.id}" type="number" step="any"></div><div><label>Unidad</label><input id="in-u-${m.id}" placeholder="%"></div></div>
         <button class="primary" data-act="add-ind" data-m="${m.id}" style="margin-top:8px">Guardar indicador</button></details>` : ''}
       <h3 style="margin-top:14px">Acciones y cronograma ${yr}</h3>
-      ${ma.length ? `<div class="tw"><table><tr><th>Acción</th><th>Responsable</th><th>Indicador</th><th>Costo</th><th>Fuente</th><th style="min-width:150px">${meses.join(' ')}</th><th></th></tr>${ma.map(a => `<tr><td>${esc(a.descripcion)}<br><span class="small muted">${esc(a.fecha_inicio || '')} → ${esc(a.fecha_fin || '')}</span></td><td>${esc(userName(a.responsable_id) !== '—' ? userName(a.responsable_id) : a.responsable_texto)}</td><td>${esc(inds.find(i => i.id === a.indicador_id)?.nombre || '—')}</td><td>${money(a.costo)}</td><td>${esc(a.fuente_financiacion || '')}</td><td>${gantt(a)}</td><td>${edit ? `<button class="ghost danger small" data-act="del" data-t="acciones" data-id="${a.id}">✕</button>` : ''}</td></tr>`).join('')}</table></div>` : '<p class="small muted">Sin acciones.</p>'}
+      ${ma.length ? `<div class="tw"><table><tr><th>Acción</th><th>Responsable</th><th>Indicador</th><th>Costo</th><th>Fuente</th><th style="min-width:150px">${meses.join(' ')}</th><th></th></tr>${ma.map(a => `<tr><td>${esc(a.descripcion)}<br><span class="small muted">${esc(a.fecha_inicio || '')} → ${esc(a.fecha_fin || '')}</span></td><td>${esc(a.responsable_texto || '—')}</td><td>${esc(inds.find(i => i.id === a.indicador_id)?.nombre || '—')}</td><td>${money(a.costo)}</td><td>${esc(a.fuente_financiacion || '')}</td><td>${gantt(a)}</td><td>${edit ? `<button class="ghost danger small" data-act="del" data-t="acciones" data-id="${a.id}">✕</button>` : ''}</td></tr>`).join('')}</table></div>` : '<p class="small muted">Sin acciones.</p>'}
       ${edit ? `<details style="margin-top:6px"><summary style="cursor:pointer;color:var(--brand)">+ Agregar acción</summary><label>Descripción</label><input id="ac-d-${m.id}">
-        <div class="row"><div><label>Responsable</label><select id="ac-r-${m.id}"><option value="">Otro / sin asignar</option>${S.perfiles.filter(p => p.activo).map(p => `<option value="${p.id}">${esc(p.nombre)}</option>`).join('')}</select></div><div><label>Inicio</label><input type="date" id="ac-i-${m.id}"></div><div><label>Fin</label><input type="date" id="ac-f-${m.id}"></div></div>
+        <div class="row"><div><label>Responsable</label><input id="ac-r-${m.id}" list="dl-eq-${aid}" placeholder="Nombre del responsable"><datalist id="dl-eq-${aid}">${equipoDe(aid).map(i => `<option value="${esc(i.nombre)}">`).join('')}</datalist></div><div><label>Inicio</label><input type="date" id="ac-i-${m.id}"></div><div><label>Fin</label><input type="date" id="ac-f-${m.id}"></div></div>
         <div class="row"><div><label>Indicador asociado</label><select id="ac-x-${m.id}"><option value="">—</option>${mi.map(i => `<option value="${i.id}">${esc(i.nombre)}</option>`).join('')}</select></div><div><label>Costo estimado (COP)</label><input type="number" min="0" id="ac-c-${m.id}" value="0"></div><div><label>Fuente</label><select id="ac-s-${m.id}"><option value="">—</option><option>FSE</option><option>otra</option></select></div></div>
         <button class="primary" data-act="add-acc" data-m="${m.id}" style="margin-top:8px">Guardar acción</button></details>` : ''}</div>`;
   }).join('');
@@ -378,38 +378,40 @@ async function vSeg(arg) {
 /* ---------- EQUIPOS / ADMIN ---------- */
 async function vEquipo() {
   const adm = isAdmin();
-  const personas = S.perfiles;
-  const rows = personas.map(p => {
-    const ms = S.miembros.filter(m => m.user_id === p.id);
-    return `<tr><td>${esc(p.nombre)}<br><span class="small muted">${esc(p.email)}</span></td>
-      <td>${adm ? `<select data-act="rol" data-id="${p.id}"><option value="miembro" ${p.rol === 'miembro' ? 'selected' : ''}>Miembro</option><option value="consejo" ${p.rol === 'consejo' ? 'selected' : ''}>Consejo directivo</option><option value="admin" ${p.rol === 'admin' ? 'selected' : ''}>Administrador</option></select>` : esc(p.rol)}</td>
-      <td class="c">${adm ? `<input type="checkbox" style="width:auto" data-act="activo" data-id="${p.id}" ${p.activo ? 'checked' : ''} ${p.id === S.user.id ? 'disabled' : ''}>` : (p.activo ? 'Sí' : 'No')}</td>
-      ${S.areas.map(a => { const m = ms.find(x => x.area_id === a.id); return `<td class="c">${adm ? `<input type="checkbox" style="width:auto" title="Integrante" data-act="miembro" data-id="${p.id}" data-a="${a.id}" ${m ? 'checked' : ''}> <label style="display:inline;font-weight:400" title="Coordinador"><input type="checkbox" style="width:auto" data-act="coord" data-id="${p.id}" data-a="${a.id}" ${m?.es_coordinador ? 'checked' : ''} ${m ? '' : 'disabled'}>C</label>` : (m ? (m.es_coordinador ? 'Coord.' : '●') : '')}</td>`; }).join('')}</tr>`;
+  const cards = S.areas.map(a => {
+    const eq = equipoDe(a.id), ed = canArea(a.id);
+    return `<div class="card"><h3>${esc(a.nombre)}</h3>
+      <ul class="list small">${eq.map(i => `<li>${esc(i.nombre)} ${i.es_lider ? '<span class="badge b4">Líder</span>' : ''} ${ed ? `${i.es_lider ? '' : `<button class="ghost small" data-act="int-lider" data-id="${i.id}" data-a="${a.id}">Hacer líder</button>`}<button class="ghost danger small" data-act="int-del" data-id="${i.id}">Quitar</button>` : ''}</li>`).join('') || '<li class="muted">Sin integrantes registrados.</li>'}</ul>
+      ${ed ? `<div class="row"><div><input id="int-n-${a.id}" placeholder="Nombre del docente"></div><div class="fit"><button data-act="int-add" data-a="${a.id}">Agregar</button></div></div>` : ''}</div>`;
   }).join('');
   const ciclos = S.ciclos.map(c => `<tr><td>${esc(c.nombre)}</td><td>${c.anio}</td><td>${adm ? `<select data-act="etapa" data-id="${c.id}">${[['autoevaluacion', 'Autoevaluación'], ['plan', 'Plan de mejoramiento'], ['seguimiento', 'Seguimiento'], ['cerrado', 'Cerrado']].map(([v, t]) => `<option value="${v}" ${c.etapa === v ? 'selected' : ''}>${t}</option>`).join('')}</select>` : esc(c.etapa)}</td></tr>`).join('');
   return `<h1>Equipos de gestión</h1>
-    <p class="muted">${adm ? 'Activa cuentas nuevas, asigna cada persona a su área (puede estar en varias) y marca al coordinador de cada equipo (C).' : 'Integrantes de los cuatro equipos.'}</p>
-    <div class="card tw"><table><thead><tr><th>Persona</th><th>Rol</th><th>Activo</th>${S.areas.map(a => `<th class="c">${esc(a.nombre.replace('Gestión ', ''))}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>
+    <p class="muted">Integrantes de los cuatro equipos. Cada equipo puede ajustar su lista y cambiar de líder.</p>
+    <div class="grid g4">${cards}</div>
     <div class="card"><h2>Ciclos</h2><table><tr><th>Nombre</th><th>Año</th><th>Etapa</th></tr>${ciclos}</table>
-    ${adm ? `<h3 style="margin-top:14px">Nuevo ciclo</h3><div class="row"><div><label>Nombre</label><input id="ci-n" placeholder="Ruta de mejoramiento 2027"></div><div class="fit"><label>Año</label><input id="ci-a" type="number" value="${(S.ciclos[0]?.anio || 2025) + 1}"></div><div class="fit"><button class="primary" data-act="add-ciclo">Crear ciclo</button></div></div>` : ''}</div>`;
+    ${adm ? `<h3 style="margin-top:14px">Nuevo ciclo</h3><div class="row"><div><label>Nombre</label><input id="ci-n" placeholder="Ruta de mejoramiento 2027"></div><div class="fit"><label>Año</label><input id="ci-a" type="number" value="${(S.ciclos[0]?.anio || 2025) + 1}"></div><div class="fit"><button class="primary" data-act="add-ciclo">Crear ciclo</button></div></div>` : '<p class="small muted">Solo el administrador cambia la etapa del ciclo.</p>'}</div>`;
 }
 
 /* ---------- acciones ---------- */
 const ACT = {
-  'auth-mode': authSwitch,
+  'admin-login': () => showAuth(),
+  async 'su-go'() {
+    const area = +val('su-area'), msg = $('#a-msg'); msg.innerHTML = '';
+    const nombres = val('su-nom').split('\n').map(x => x.trim()).filter(Boolean), lider = document.querySelector('input[name="su-lider"]:checked')?.value;
+    if (!area) { msg.innerHTML = '<div class="err">Elija el área de gestión.</div>'; return; }
+    if (!nombres.length) { msg.innerHTML = '<div class="err">Escriba al menos un integrante.</div>'; return; }
+    if (!lider) { msg.innerHTML = '<div class="err">Marque quién es el líder del equipo.</div>'; return; }
+    try { await q(SB.rpc('iniciar_equipo', { p_area: area, p_nombres: nombres, p_lider: lider })); }
+    catch (e) { msg.innerHTML = `<div class="err">${esc(e.message)}</div>`; return; }
+    location.hash = '#/autoevaluacion/' + area; await start();
+  },
   logout: async () => { await SB.auth.signOut(); },
   reload: () => start(),
   print: () => window.print(),
   csv: () => { const b = new Blob(['﻿' + window.__csv], { type: 'text/csv;charset=utf-8' }), a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `perfil-institucional-${S.ciclo.anio}.csv`; a.click(); },
-  async 'save-val'(el) {
-    const c = +el.dataset.c, n = document.querySelector(`input[name="n-${c}"]:checked`);
-    if (!n) return toast('Elige un nivel del 1 al 4', true);
-    await q(SB.from('valoraciones').upsert({ ciclo_id: S.ciclo.id, componente_id: c, user_id: S.user.id, nivel: +n.value, justificacion: val('j-' + c), updated_at: new Date().toISOString() }, { onConflict: 'ciclo_id,componente_id,user_id' }));
-    toast('Valoración guardada'); await refresh(c);
-  },
   async 'save-cons'(el) {
-    const c = +el.dataset.c, n = +val('cn-' + c); if (!n) return toast('Elige el nivel de consenso', true);
-    await q(SB.from('consensos').upsert({ ciclo_id: S.ciclo.id, componente_id: c, nivel: n, justificacion: val('cj-' + c), definido_por: S.user.id, updated_at: new Date().toISOString() }, { onConflict: 'ciclo_id,componente_id' }));
+    const c = +el.dataset.c, n = +(document.querySelector(`input[name="n-${c}"]:checked`)?.value || 0); if (!n) return toast('Elige el nivel acordado', true);
+    await q(SB.from('consensos').upsert({ ciclo_id: S.ciclo.id, componente_id: c, nivel: n, justificacion: val('cj-' + c), updated_at: new Date().toISOString() }, { onConflict: 'ciclo_id,componente_id' }));
     toast('Consenso guardado'); await refresh(c);
   },
   async 'del-cons'(el) { const c = +el.dataset.c; await q(SB.from('consensos').delete().eq('ciclo_id', S.ciclo.id).eq('componente_id', c)); await refresh(c); },
@@ -452,7 +454,7 @@ const ACT = {
   async 'add-acc'(el) {
     const m = el.dataset.m, d = val('ac-d-' + m); if (!d) return toast('Describe la acción', true);
     const ini = val('ac-i-' + m), fin = val('ac-f-' + m); if (ini && fin && fin < ini) return toast('La fecha final es anterior a la inicial', true);
-    await q(SB.from('acciones').insert({ meta_id: +m, descripcion: d, responsable_id: val('ac-r-' + m) || null, fecha_inicio: ini || null, fecha_fin: fin || null, indicador_id: num(val('ac-x-' + m)), costo: num(val('ac-c-' + m)) || 0, fuente_financiacion: val('ac-s-' + m) || null })); route();
+    await q(SB.from('acciones').insert({ meta_id: +m, descripcion: d, responsable_texto: val('ac-r-' + m) || null, fecha_inicio: ini || null, fecha_fin: fin || null, indicador_id: num(val('ac-x-' + m)), costo: num(val('ac-c-' + m)) || 0, fuente_financiacion: val('ac-s-' + m) || null })); route();
   },
   async del(el) { if (!confirm('¿Eliminar este registro y lo que depende de él?')) return; await q(SB.from(el.dataset.t).delete().eq('id', el.dataset.id)); route(); },
   async 'add-seg'(el) {
@@ -464,28 +466,29 @@ const ACT = {
   async 'add-enc'() { const t = val('en-t'); if (!t) return toast('Escribe el tema', true); await q(SB.from('encuentros_seguimiento').insert({ ciclo_id: S.ciclo.id, fecha: val('en-f') || today(), tema: t, agenda: val('en-a') || null, acta: val('en-c') || null })); route(); },
   async 'add-dec'() { const d = val('de-d'); if (!d) return toast('Escribe la decisión', true); await q(SB.from('decisiones').insert({ ciclo_id: S.ciclo.id, area_id: num(val('de-a')), decision: d, justificacion: val('de-j') || null })); route(); },
   async 'add-lec'() { const x = val('le-x'); if (!x) return toast('Escribe la lección', true); await q(SB.from('lecciones').insert({ ciclo_id: S.ciclo.id, area_id: num(val('le-a')), tipo: val('le-t'), texto: x })); route(); },
+  async 'int-add'(el) {
+    const a = +el.dataset.a, n = val('int-n-' + a); if (!n) return toast('Escribe el nombre', true);
+    await q(SB.from('integrantes').insert({ area_id: a, nombre: n, es_lider: !equipoDe(a).length })); await reloadTeam();
+  },
+  async 'int-del'(el) {
+    const i = S.integrantes.find(x => x.id === +el.dataset.id);
+    if (i?.es_lider && equipoDe(i.area_id).length > 1) return toast('Primero nombra a otro líder', true);
+    await q(SB.from('integrantes').delete().eq('id', +el.dataset.id)); await reloadTeam();
+  },
+  async 'int-lider'(el) {
+    const a = +el.dataset.a;
+    await q(SB.from('integrantes').update({ es_lider: false }).eq('area_id', a).eq('es_lider', true));
+    await q(SB.from('integrantes').update({ es_lider: true }).eq('id', +el.dataset.id)); await reloadTeam();
+  },
   async 'add-ciclo'() {
     const n = val('ci-n'), a = +val('ci-a'); if (!n || !a) return toast('Completa nombre y año', true);
     await q(SB.from('ciclos').insert({ nombre: n, anio: a })); await start();
   }
 };
 const CHG = {
-  async rol(el) { await q(SB.from('profiles').update({ rol: el.value }).eq('id', el.dataset.id)); toast('Rol actualizado'); await reloadTeam(); },
-  async activo(el) { await q(SB.from('profiles').update({ activo: el.checked }).eq('id', el.dataset.id)); toast(el.checked ? 'Cuenta activada' : 'Cuenta desactivada'); await reloadTeam(); },
-  async miembro(el) {
-    const u = el.dataset.id, a = +el.dataset.a;
-    if (el.checked) await q(SB.from('equipo_miembros').insert({ user_id: u, area_id: a }));
-    else await q(SB.from('equipo_miembros').delete().eq('user_id', u).eq('area_id', a));
-    await reloadTeam();
-  },
-  async coord(el) { await q(SB.from('equipo_miembros').update({ es_coordinador: el.checked }).eq('user_id', el.dataset.id).eq('area_id', +el.dataset.a)); await reloadTeam(); },
   async etapa(el) { await q(SB.from('ciclos').update({ etapa: el.value }).eq('id', el.dataset.id)); await start(); }
 };
-async function reloadTeam() {
-  S.miembros = await q(SB.from('equipo_miembros').select('*'));
-  S.perfiles = await q(SB.from('profiles').select('id,nombre,email,rol,activo').order('nombre'));
-  route();
-}
+async function reloadTeam() { S.integrantes = await q(SB.from('integrantes').select('*').order('id')); route(); }
 /* recarga la vista conservando el componente abierto */
 async function refresh(compId) {
   const open = $$('details.comp[open]').map(d => d.id), y = window.scrollY;
@@ -498,11 +501,22 @@ async function refresh(compId) {
 document.addEventListener('click', async e => {
   const el = e.target.closest('[data-act]'); if (!el || el.tagName === 'SELECT' || el.type === 'checkbox') return;
   const f = ACT[el.dataset.act]; if (!f) return;
+  if (el.tagName === 'A') e.preventDefault();
   el.disabled = true;
   try { await f(el); } catch (err) { toast(err.message, true); } finally { el.disabled = false; }
 });
+document.addEventListener('input', e => { if (e.target.id === 'su-nom') suLideres(); });
 document.addEventListener('change', async e => {
   const el = e.target;
+  if (el.id === 'su-area') {
+    if (!el.value) return;
+    try {
+      const r = await q(SB.rpc('integrantes_de', { p_area: +el.value }));
+      $('#su-nom').value = r.map(x => x.nombre).join('\n'); suLideres(r.find(x => x.es_lider)?.nombre || '');
+    } catch (err) { toast(err.message, true); }
+    return;
+  }
+  if (el.name === 'su-lider') { $$('input[name="su-lider"]').forEach(r => r.closest('.opt').classList.toggle('sel', r.checked)); return; }
   if (el.name?.startsWith('n-')) { $$(`input[name="${el.name}"]`).forEach(r => r.closest('.opt').classList.toggle('sel', r.checked)); return; }
   if (el.dataset.act === 'fo-prio') { try { await q(SB.from('fortalezas_oportunidades').update({ priorizada: el.checked }).eq('id', el.dataset.id)); toast(el.checked ? 'Priorizada' : 'Quitada'); } catch (err) { toast(err.message, true); } return; }
   const f = CHG[el.dataset.act]; if (!f) return;
