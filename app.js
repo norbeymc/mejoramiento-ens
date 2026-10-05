@@ -155,8 +155,8 @@ async function doAuth() {
 }
 
 /* ---------- router ---------- */
-const VIEWS = () => ({ inicio: vInicio, autoevaluacion: vAuto, perfil: vPerfil, oportunidades: vOpor, pmi: vPmi, seguimiento: vSeg, equipo: vEquipo, reportes: vReportes });
-const NAV = [['inicio', 'Inicio'], ['autoevaluacion', '1 · Autoevaluación'], ['perfil', 'Perfil institucional'], ['oportunidades', 'Fortalezas y oportunidades'], ['pmi', '2 · Plan de mejoramiento'], ['seguimiento', '3 · Seguimiento'], ['equipo', 'Equipos'], ['reportes', 'Reportes']];
+const VIEWS = () => ({ inicio: vInicio, autoevaluacion: vAuto, perfil: vPerfil, oportunidades: vOpor, pmi: vPmi, seguimiento: vSeg, equipo: vEquipo, reportes: vReportes, contexto: vContexto, informe: vInforme });
+const NAV = [['inicio', 'Inicio'], ['contexto', 'Contexto'], ['autoevaluacion', '1 · Autoevaluación'], ['perfil', 'Perfil institucional'], ['oportunidades', 'Fortalezas y oportunidades'], ['pmi', '2 · Plan de mejoramiento'], ['seguimiento', '3 · Seguimiento'], ['equipo', 'Equipos'], ['reportes', 'Reportes']];
 async function route() {
   if (!S.user || !S.profile?.activo) return;
   const [r, arg] = (location.hash || '#/inicio').slice(2).split('/');
@@ -195,7 +195,7 @@ async function vInicio() {
       <p class="small" style="margin:.5rem 0 .2rem">Componentes con nivel acordado: <b>${conCons}/${cs.length}</b></p><div class="bar"><i style="width:${pct(conCons, cs.length)}%"></i></div>
       <p class="small" style="margin:.5rem 0 .2rem">Oportunidades priorizadas: <b>${opor.filter(o => o.area_id === a.id && o.tipo === 'oportunidad' && o.priorizada).length}</b> · Objetivo: <b>${obj.some(o => o.area_id === a.id) ? 'definido' : 'pendiente'}</b></p>
       <p class="small" style="margin:.5rem 0 .2rem">Avance de acciones (${ac.length}): <b>${avance}%</b></p><div class="bar"><i style="width:${avance}%"></i></div>
-      <div class="row noprint" style="margin-top:12px"><a class="btn" href="#/autoevaluacion/${a.id}">Autoevaluar</a><a class="btn" href="#/pmi/${a.id}">Plan</a></div></div>`;
+      <div class="row noprint" style="margin-top:12px"><a class="btn" href="#/autoevaluacion/${a.id}">Autoevaluar</a><a class="btn" href="#/pmi/${a.id}">Plan</a>${isAdmin() && conCons === cs.length ? `<button data-act="gen-pdf" data-a="${a.id}">PDF del área</button>` : ''}</div></div>`;
   }).join('');
   return `<h1>${esc(S.ciclo.nombre)}</h1>${stepper()}
     <p class="muted" style="margin-top:12px">Ruta de la Guía 34: <b>autoevaluar</b> los 45 componentes con evidencias → <b>perfil institucional</b> → <b>priorizar</b> una oportunidad por área → <b>plan de mejoramiento anual</b> (objetivo, metas, indicadores, acciones) → <b>seguimiento</b> y aprendizajes para el siguiente ciclo.</p>
@@ -206,62 +206,73 @@ async function vInicio() {
 async function vAuto(arg) {
   const aid = +arg || defaultArea(), area = S.areas.find(a => a.id === aid), cid = S.ciclo.id;
   const comps = areaComps(aid), ids = comps.map(c => c.id);
-  const [cons, evid] = await Promise.all([
-    q(SB.from('consensos').select('*').eq('ciclo_id', cid).in('componente_id', ids)),
-    q(SB.from('evidencias').select('*').eq('ciclo_id', cid).in('componente_id', ids).order('created_at'))
-  ]);
+  const cons = await q(SB.from('consensos').select('*').eq('ciclo_id', cid).in('componente_id', ids));
   const edit = canArea(aid);
   const body = S.procesos.filter(p => p.area_id === aid).map(p => {
     const fu = S.fuentes.filter(f => f.proceso_id === p.id);
     const cards = comps.filter(c => c.proceso_id === p.id).map(c => {
-      const con = cons.find(x => x.componente_id === c.id), ev = evid.filter(e => e.componente_id === c.id);
-      const warn = con && con.nivel >= 3 && !ev.length ? '<span class="badge bw">Sin evidencia</span>' : '';
-      return `<details class="comp" id="comp-${c.id}">
+      const con = cons.find(x => x.componente_id === c.id);
+      const warn = con && con.nivel >= 3 && !(con.justificacion || '').trim() ? '<span class="badge bw">Falta describir evidencia</span>' : '';
+      return `<details class="comp" id="comp-${c.id}" data-def="${con ? 1 : 0}">
         <summary><span class="t"><b>${c.orden}.</b> ${esc(c.nombre)}</span>${warn}${badge(con?.nivel, 'Sin definir')}</summary>
         <div class="comp-body">
           <h3>Nivel acordado por el equipo</h3>
           <div class="opts">${[1, 2, 3, 4].map(n => `<label class="opt ${con?.nivel === n ? 'sel' : ''}"><input type="radio" name="n-${c.id}" value="${n}" ${con?.nivel === n ? 'checked' : ''} ${edit ? '' : 'disabled'}><div><b>${n} · ${NIV[n]}</b><span>${esc(S.descs[c.id]?.[n])}</span></div></label>`).join('')}</div>
-          <label for="cj-${c.id}">Justificación (¿en qué se basa el equipo?)</label>
+          <label for="cj-${c.id}">Descripción de la evidencia (¿qué documentos, registros o hechos respaldan este nivel?)</label>
           <textarea id="cj-${c.id}" ${edit ? '' : 'disabled'}>${esc(con?.justificacion)}</textarea>
-          ${edit ? `<div style="margin-top:8px"><button class="primary" data-act="save-cons" data-c="${c.id}">Guardar nivel acordado</button> ${con ? `<button class="ghost danger small" data-act="del-cons" data-c="${c.id}">Quitar</button>` : ''}</div>` : '<p class="small muted">Solo lectura: no perteneces a este equipo.</p>'}
-          <h3 style="margin-top:18px">Evidencias</h3>
-          ${ev.length ? `<ul class="list small">${ev.map(e => `<li><b>${esc(e.titulo)}</b> ${e.url ? `· <a href="${esc(e.url)}" target="_blank" rel="noopener">abrir</a>` : ''}<br><span class="muted">${esc(e.descripcion)}</span> ${edit ? `<button class="ghost danger small" data-act="del-ev" data-e="${e.id}">Eliminar</button>` : ''}</li>`).join('')}</ul>` : '<p class="small muted">Sin evidencias registradas.</p>'}
-          ${edit ? `<div class="row"><div><input id="et-${c.id}" placeholder="Título de la evidencia"></div><div><input id="eu-${c.id}" type="url" placeholder="Enlace (Drive, sitio…)"></div></div><textarea id="ed-${c.id}" placeholder="Descripción breve" style="min-height:48px;margin-top:6px"></textarea><button data-act="add-ev" data-c="${c.id}" style="margin-top:6px">Agregar evidencia</button>` : ''}
+          ${edit ? `<div style="margin-top:8px"><button class="primary" data-act="save-cons" data-c="${c.id}">Guardar y pasar al siguiente</button> ${con ? `<button class="ghost danger small" data-act="del-cons" data-c="${c.id}">Quitar</button>` : ''}</div>` : '<p class="small muted">Solo lectura: no perteneces a este equipo.</p>'}
         </div></details>`;
     }).join('');
     return `<section class="card"><h2>${esc(p.nombre)}</h2>${fu.length ? `<details class="small"><summary class="muted" style="cursor:pointer">Fuentes de evidencia sugeridas (Anexo 3 de la guía)</summary><ul>${fu.map(f => `<li><b>${esc(f.fuente)}:</b> ${esc(f.ejemplo)}</li>`).join('')}</ul></details>` : ''}${cards}</section>`;
   }).join('');
-  const done = cons.length, eq = equipoDe(aid);
+  const done = cons.length, total = comps.length, falta = total - done, eq = equipoDe(aid);
+  const lv = id => cons.find(c => c.componente_id === id)?.nivel, nm = list => list.length ? `<ul class="small" style="margin:.3rem 0 0">${list.map(c => `<li>${esc(c.nombre)}${lv(c.id) ? ' ' + badge(lv(c.id)) : ''}</li>`).join('')}</ul>` : '<p class="small muted" style="margin:.3rem 0 0">Ninguno.</p>';
+  const fin = falta === 0
+    ? `<div class="card" style="margin:12px 0;border-color:var(--brand)"><h2>¡Autoevaluación completa!</h2><p class="muted" style="margin-top:0">Resumen de ${esc(area.nombre)}: los ${total} componentes tienen nivel acordado.</p>
+        <div class="row" style="gap:.5rem">${[1, 2, 3, 4].map(k => `<div class="fit"><span class="badge b${k}">${k} · ${NIV[k]}</span> <b>${comps.filter(c => lv(c.id) === k).length}</b></div>`).join('')}</div>
+        <div class="grid g2" style="margin-top:12px"><div><b>Fortalezas (nivel 4)</b>${nm(comps.filter(c => lv(c.id) === 4))}</div><div><b>Oportunidades de mejora (niveles 1 y 2)</b>${nm(comps.filter(c => lv(c.id) <= 2))}</div></div>
+        <p class="small muted" style="margin-bottom:0">Siguiente paso: en “Fortalezas y oportunidades” priorizan una oportunidad y luego formulan el plan de mejoramiento.</p>
+        ${isAdmin() ? `<div class="noprint" style="margin-top:10px"><button data-act="gen-pdf" data-a="${aid}">Generar PDF del área (administrador)</button></div>` : ''}</div>`
+    : `<div class="card noprint" style="margin:12px 0"><div class="row" style="align-items:center"><div><b>Faltan ${falta} de ${total} componentes</b><div class="bar" style="margin-top:6px"><i style="width:${Math.round(100 * done / total)}%"></i></div></div><div class="fit"><button class="primary" data-act="next-comp">Ir al siguiente sin definir</button></div></div>${isAdmin() ? `<div style="margin-top:8px"><button data-act="gen-pdf" data-a="${aid}">Generar PDF parcial (administrador)</button></div>` : ''}</div>`;
   return `<h1>Autoevaluación</h1>${areaTabs('autoevaluacion', aid)}
-    <p class="muted">${esc(area.nombre)} · ${done}/${comps.length} componentes con nivel acordado.${eq.length ? ` Equipo: ${esc(eq.map(i => i.nombre + (i.es_lider ? ' (líder)' : '')).join(' · '))}.` : ''}</p>
-    <p class="muted small">Para cada componente, lean los cuatro descriptores, acuerden el nivel (1 a 4) y justifíquenlo. Los niveles 3 y 4 requieren evidencia.</p>${body}`;
+    <p class="muted">${esc(area.nombre)} · ${done}/${total} componentes con nivel acordado.${eq.length ? ` Equipo: ${esc(eq.map(i => i.nombre + (i.es_lider ? ' (líder)' : '')).join(' · '))}.` : ''}</p>
+    <p class="muted small">Para cada componente, lean los cuatro descriptores, acuerden el nivel (1 a 4) y describan la evidencia que lo respalda. Los niveles 3 y 4 requieren evidencia.</p>${fin}${body}`;
+}
+/* abre el siguiente componente sin nivel, a partir de uno dado (o desde el inicio) */
+function openNext(fromId) {
+  const all = $$('details.comp'); if (!all.length) return false;
+  let start = fromId ? all.findIndex(d => d.id === 'comp-' + fromId) + 1 : 0;
+  const ord = [...all.slice(start), ...all.slice(0, start)];
+  const t = ord.find(d => d.dataset.def === '0');
+  all.forEach(d => { d.open = false; });
+  if (!t) return false;
+  t.open = true; t.scrollIntoView({ block: 'start' }); return true;
 }
 
 /* ---------- PERFIL INSTITUCIONAL (Anexo 2) ---------- */
 async function vPerfil() {
   const cid = S.ciclo.id;
   const prev = S.ciclos.filter(c => c.anio < S.ciclo.anio).sort((a, b) => b.anio - a.anio)[0];
-  const [cons, evid, pcons] = await Promise.all([
+  const [cons, pcons] = await Promise.all([
     q(SB.from('consensos').select('*').eq('ciclo_id', cid)),
-    q(SB.from('evidencias').select('componente_id').eq('ciclo_id', cid)),
     prev ? q(SB.from('consensos').select('*').eq('ciclo_id', prev.id)) : Promise.resolve([])
   ]);
   const lvl = id => cons.find(c => c.componente_id === id)?.nivel || 0;
   const ant = id => pcons.find(c => c.componente_id === id)?.nivel || 0;
   const mark = (n, k) => `<td class="c ${n === k ? 'l' + k : ''}">${n === k ? '●' : ''}</td>`;
-  const sumRow = (label, list) => `<tr class="tot"><td colspan="2">${label}</td>${[1, 2, 3, 4].map(k => `<td class="c">${list.filter(id => lvl(id) === k).length}</td>`).join('')}<td colspan="2" class="small">${list.filter(id => lvl(id)).length}/${list.length} valorados</td></tr>`;
-  let csv = 'Área;Proceso;Componente;Nivel acordado;Evidencias;Ciclo anterior\n';
+  const sumRow = (label, list) => `<tr class="tot"><td colspan="2">${label}</td>${[1, 2, 3, 4].map(k => `<td class="c">${list.filter(id => lvl(id) === k).length}</td>`).join('')}<td class="small">${list.filter(id => lvl(id)).length}/${list.length} valorados</td></tr>`;
+  let csv = 'Área;Proceso;Componente;Nivel acordado;Descripción de la evidencia;Ciclo anterior\n';
   const rows = S.areas.map(a => {
     const aIds = areaComps(a.id).map(c => c.id);
     const inner = S.procesos.filter(p => p.area_id === a.id).map(p => {
       const cs = S.comps.filter(c => c.proceso_id === p.id);
       return cs.map((c, i) => {
-        csv += [a.nombre, p.nombre, c.nombre, lvl(c.id) || '', evid.filter(e => e.componente_id === c.id).length, ant(c.id) || ''].map(x => `"${String(x).replace(/"/g, '""')}"`).join(';') + '\n';
+        csv += [a.nombre, p.nombre, c.nombre, lvl(c.id) || '', cons.find(x => x.componente_id === c.id)?.justificacion || '', ant(c.id) || ''].map(x => `"${String(x).replace(/"/g, '""')}"`).join(';') + '\n';
         const d = lvl(c.id) && ant(c.id) ? lvl(c.id) - ant(c.id) : null;
-        return `<tr>${i === 0 ? `<td rowspan="${cs.length + 1}" style="width:22%">${esc(p.nombre)}</td>` : ''}<td>${esc(c.nombre)}</td>${[1, 2, 3, 4].map(k => mark(lvl(c.id), k)).join('')}<td class="c">${evid.filter(e => e.componente_id === c.id).length}</td><td class="c">${d === null ? '—' : (d > 0 ? '▲ +' + d : d < 0 ? '▼ ' + d : '=')}</td></tr>`;
+        return `<tr>${i === 0 ? `<td rowspan="${cs.length + 1}" style="width:22%">${esc(p.nombre)}</td>` : ''}<td>${esc(c.nombre)}</td>${[1, 2, 3, 4].map(k => mark(lvl(c.id), k)).join('')}<td class="c">${d === null ? '—' : (d > 0 ? '▲ +' + d : d < 0 ? '▼ ' + d : '=')}</td></tr>`;
       }).join('') + sumRow('Total proceso', cs.map(c => c.id)).replace('<tr class="tot"><td colspan="2">', '<tr class="tot"><td>');
     }).join('');
-    return `<tr><th colspan="8">${esc(a.nombre.toUpperCase())}</th></tr>${inner}${sumRow('TOTAL ÁREA', aIds).replace('<td colspan="2">', '<td colspan="2" style="text-align:right">')}`;
+    return `<tr><th colspan="7">${esc(a.nombre.toUpperCase())}</th></tr>${inner}${sumRow('TOTAL ÁREA', aIds).replace('<td colspan="2">', '<td colspan="2" style="text-align:right">')}`;
   }).join('');
   window.__csv = csv;
   const all = S.comps.map(c => c.id);
@@ -270,7 +281,7 @@ async function vPerfil() {
     <p class="muted">Se genera solo a partir de los niveles acordados por los equipos (Anexo 2 de la guía). ${prev ? `Se compara con “${esc(prev.nombre)}”.` : 'Sin ciclo anterior para comparar.'}</p>
     <div class="row noprint" style="margin-bottom:12px"><div class="fit"><button data-act="csv">Descargar CSV</button></div><div class="fit"><button data-act="print">Imprimir / PDF</button></div></div>
     <div class="grid g4" style="margin-bottom:14px">${dist.map((n, i) => `<div class="card"><span class="badge b${i + 1}">${i + 1} · ${NIV[i + 1]}</span><div class="kpi">${n}</div><span class="muted small">de ${all.length} componentes</span></div>`).join('')}</div>
-    <div class="tw"><table><thead><tr><th>Proceso</th><th>Componente</th>${[1, 2, 3, 4].map(k => `<th class="c" title="${NIV[k]}">${k}</th>`).join('')}<th>Evid.</th><th>Δ</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="tw"><table><thead><tr><th>Proceso</th><th>Componente</th>${[1, 2, 3, 4].map(k => `<th class="c" title="${NIV[k]}">${k}</th>`).join('')}<th>Δ</th></tr></thead><tbody>${rows}</tbody></table></div>
     <p class="small muted">1 Existencia · 2 Pertinencia · 3 Apropiación · 4 Mejoramiento continuo. Δ = cambio frente al ciclo anterior.</p>`;
 }
 
@@ -392,6 +403,67 @@ async function vEquipo() {
     ${adm ? `<h3 style="margin-top:14px">Nuevo ciclo</h3><div class="row"><div><label>Nombre</label><input id="ci-n" placeholder="Ruta de mejoramiento 2027"></div><div class="fit"><label>Año</label><input id="ci-a" type="number" value="${(S.ciclos[0]?.anio || 2025) + 1}"></div><div class="fit"><button class="primary" data-act="add-ciclo">Crear ciclo</button></div></div>` : '<p class="small muted">Solo el administrador cambia la etapa del ciclo.</p>'}</div>`;
 }
 
+/* ---------- CONTEXTO ---------- */
+const CAT = { institucional: 'Institucional', social: 'Social', economica: 'Económico', cultural: 'Cultural', ambiental: 'Ambiental', pedagogica: 'Pedagógico', otra: 'Otro' };
+async function vContexto() {
+  const items = await q(SB.from('contexto_hallazgos').select('*').eq('ciclo_id', S.ciclo.id).order('id'));
+  const canEdit = isAdmin() || S.miembros.some(m => m.user_id === S.user.id);
+  const catSel = id => `<select id="ct-c-${id}">${Object.entries(CAT).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select>`;
+  const form = (id, it) => `<div class="row"><div><label>Título</label><input id="ct-t-${id}" value="${esc(it?.titulo)}"></div><div class="fit"><label>Categoría</label>${catSel(id).replace(`value="${it?.categoria}"`, `value="${it?.categoria}" selected`)}</div></div>
+    <label>Descripción</label><textarea id="ct-d-${id}" style="min-height:90px">${esc(it?.descripcion)}</textarea><label>Fuente</label><input id="ct-f-${id}" value="${esc(it?.fuente)}">
+    <div style="margin-top:8px"><button class="primary" data-act="ctx-save" data-id="${id}">Guardar</button></div>`;
+  const list = items.map(it => `<div class="card"><div class="row" style="align-items:center"><div><span class="badge b0">${esc(CAT[it.categoria] || it.categoria)}</span> <b>${esc(it.titulo)}</b></div>${canEdit ? `<div class="fit"><button class="ghost danger small" data-act="ctx-del" data-id="${it.id}">Eliminar</button></div>` : ''}</div>
+    <p style="margin:.4rem 0">${esc(it.descripcion)}</p><p class="small muted" style="margin:0">${esc(it.fuente)}</p>
+    ${canEdit ? `<details style="margin-top:6px"><summary style="cursor:pointer;color:var(--brand)">Editar</summary>${form(it.id, it)}</details>` : ''}</div>`).join('') || '<div class="note">Aún no hay elementos de contexto.</div>';
+  return `<h1>Contexto institucional</h1>
+    <p class="muted">Punto de partida de la autoevaluación (Guía 34): quiénes somos, dónde estamos y qué retos tenemos. Se precargó con lo más relevante del PEI 2026; cada equipo puede corregirlo o ampliarlo.</p>
+    <div class="grid g2">${list}</div>
+    ${canEdit ? `<div class="card"><h3>Agregar elemento de contexto</h3>${form('new', null)}</div>` : ''}`;
+}
+
+/* ---------- INFORMES (se imprimen / guardan como PDF) ---------- */
+const nivCount = (ids, cons) => [1, 2, 3, 4].map(k => ids.filter(id => cons.find(c => c.componente_id === id)?.nivel === k).length);
+async function vInforme(arg) {
+  const general = arg === 'general';
+  if (!isAdmin()) return '<div class="err">Solo el administrador genera los informes en PDF.</div>';
+  const areas = general ? S.areas : S.areas.filter(a => a.id === +arg);
+  if (!areas.length) return '<div class="err">Área no encontrada.</div>';
+  const cid = S.ciclo.id;
+  const [cons, fo, objs, metas, inds, accs, ctx] = await Promise.all([
+    q(SB.from('consensos').select('*').eq('ciclo_id', cid)),
+    q(SB.from('fortalezas_oportunidades').select('*').eq('ciclo_id', cid)),
+    q(SB.from('objetivos').select('*').eq('ciclo_id', cid)),
+    q(SB.from('metas').select('*').order('id')), q(SB.from('indicadores').select('*').order('id')), q(SB.from('acciones').select('*').order('id')),
+    q(SB.from('contexto_hallazgos').select('*').eq('ciclo_id', cid).order('id'))
+  ]);
+  const fecha = new Date().toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric' });
+  const titulo = general ? 'Informe general de autoevaluación y plan de mejoramiento' : 'Resumen de autoevaluación · ' + areas[0].nombre;
+  const nivBadge = n => n ? `<span class="badge b${n}">${n} · ${NIV[n]}</span>` : '<span class="badge b0">Sin definir</span>';
+  const sec = a => {
+    const cs = areaComps(a.id), ids = cs.map(c => c.id), d = nivCount(ids, cons), def = d.reduce((x, y) => x + y, 0), eq = equipoDe(a.id);
+    const lvl = id => cons.find(c => c.componente_id === id);
+    const proc = S.procesos.filter(p => p.area_id === a.id).map(p => `<h3>${esc(p.nombre)}</h3><table><tr><th style="width:34%">Componente</th><th style="width:15%">Nivel</th><th>Descripción de la evidencia</th></tr>${cs.filter(c => c.proceso_id === p.id).map(c => `<tr><td>${esc(c.nombre)}</td><td>${nivBadge(lvl(c.id)?.nivel)}</td><td class="small">${esc(lvl(c.id)?.justificacion || '')}</td></tr>`).join('')}</table>`).join('');
+    const fort = cs.filter(c => lvl(c.id)?.nivel === 4), opor = cs.filter(c => lvl(c.id)?.nivel && lvl(c.id).nivel <= 2);
+    const prio = fo.filter(f => f.area_id === a.id && f.tipo === 'oportunidad' && f.priorizada);
+    const ob = objs.find(o => o.area_id === a.id), ms = ob ? metas.filter(m => m.objetivo_id === ob.id) : [];
+    const plan = ob ? `<h3>Objetivo</h3><p>${esc(ob.texto)}</p>${ms.map(m => { const mi = inds.filter(i => i.meta_id === m.id), ma = accs.filter(x => x.meta_id === m.id); return `<p><b>Meta:</b> ${esc(m.texto)} <span class="small muted">${esc(m.fecha_inicio || '')} → ${esc(m.fecha_fin || '')}</span></p>${mi.length ? `<p class="small"><b>Indicadores:</b> ${mi.map(i => esc(i.nombre) + (i.meta_valor != null ? ` (meta ${i.meta_valor} ${esc(i.unidad_medida || '')})` : '')).join('; ')}</p>` : ''}${ma.length ? `<table><tr><th>Acción</th><th>Responsable</th><th>Fechas</th><th>Costo</th><th>Avance</th></tr>${ma.map(x => `<tr><td>${esc(x.descripcion)}</td><td>${esc(x.responsable_texto || '')}</td><td class="small">${esc(x.fecha_inicio || '')} → ${esc(x.fecha_fin || '')}</td><td>${money(x.costo)}</td><td>${x.avance}%</td></tr>`).join('')}</table>` : ''}`; }).join('')}` : '<p class="muted">Aún no se ha formulado el plan de mejoramiento de esta área.</p>';
+    return `<section class="${general ? 'pb' : ''}"><h2>${esc(a.nombre)}</h2>
+      <p class="small"><b>Equipo:</b> ${eq.length ? esc(eq.map(i => i.nombre + (i.es_lider ? ' (líder)' : '')).join(', ')) : 'sin registrar'}</p>
+      <p><b>Componentes con nivel acordado:</b> ${def}/${cs.length} · ${[1, 2, 3, 4].map(k => `<span class="badge b${k}">${NIV[k]}: ${d[k - 1]}</span>`).join(' ')}</p>
+      <h3>Autoevaluación por componente</h3>${proc}
+      <h3>Fortalezas (nivel 4)</h3>${fort.length ? `<ul>${fort.map(c => `<li>${esc(c.nombre)}</li>`).join('')}</ul>` : '<p class="muted small">Ninguna componente en nivel 4.</p>'}
+      <h3>Oportunidades de mejora (niveles 1 y 2)</h3>${opor.length ? `<ul>${opor.map(c => `<li>${esc(c.nombre)} ${nivBadge(lvl(c.id).nivel)}</li>`).join('')}</ul>` : '<p class="muted small">Ninguna componente en niveles 1 o 2.</p>'}
+      ${prio.length ? `<p><b>Oportunidad priorizada para el plan:</b> ${prio.map(f => esc(f.descripcion)).join('; ')}</p>` : ''}
+      <h3>Plan de mejoramiento</h3>${plan}</section>`;
+  };
+  const resumen = general ? `<h2>Resumen institucional</h2><table><tr><th>Área de gestión</th>${[1, 2, 3, 4].map(k => `<th class="c">${k} · ${NIV[k]}</th>`).join('')}<th class="c">Sin definir</th></tr>${areas.map(a => { const ids = areaComps(a.id).map(c => c.id), d = nivCount(ids, cons); return `<tr><td>${esc(a.nombre)}</td>${d.map(n => `<td class="c">${n}</td>`).join('')}<td class="c">${ids.length - d.reduce((x, y) => x + y, 0)}</td></tr>`; }).join('')}${(() => { const ids = S.comps.map(c => c.id), d = nivCount(ids, cons); return `<tr class="tot"><td>TOTAL (${ids.length} componentes)</td>${d.map(n => `<td class="c">${n}</td>`).join('')}<td class="c">${ids.length - d.reduce((x, y) => x + y, 0)}</td></tr>`; })()}</table>` : '';
+  const contexto = ctx.length ? `<h2>Contexto institucional</h2>${ctx.map(i => `<p class="small" style="margin:.3rem 0"><b>${esc(i.titulo)}.</b> ${esc(i.descripcion)}</p>`).join('')}` : '';
+  S.pdfName = (general ? 'Informe-general-' : 'Resumen-' + areas[0].nombre.replace(/[^\wÁÉÍÓÚÑáéíóúñ]+/g, '-') + '-') + S.ciclo.anio;
+  if (S.autoPrint) { S.autoPrint = false; setTimeout(() => { const t = document.title; document.title = S.pdfName; window.print(); document.title = t; }, 700); }
+  return `<div class="row noprint" style="margin-bottom:12px"><div class="fit"><button class="primary" data-act="print">Imprimir / Guardar como PDF</button></div><div class="fit"><button data-act="volver">Volver</button></div></div>
+    <div class="informe">${printHead(titulo)}<p class="muted small">${esc(S.ciclo.nombre)} · generado el ${esc(fecha)}</p>${resumen}${general ? contexto : ''}${areas.map(sec).join('')}${general ? '' : contexto}</div>`;
+}
+
 /* ---------- REPORTES (administrador) ---------- */
 const csvCell = x => `"${String(x ?? '').replace(/"/g, '""')}"`;
 function csvDown(nombre, filas) {
@@ -400,24 +472,23 @@ function csvDown(nombre, filas) {
 }
 async function vReportes() {
   const cid = S.ciclo.id;
-  const [cons, evid, fo, objs, metas, inds, accs] = await Promise.all([
+  const [cons, fo, objs, metas, inds, accs] = await Promise.all([
     q(SB.from('consensos').select('*').eq('ciclo_id', cid)),
-    q(SB.from('evidencias').select('*').eq('ciclo_id', cid)),
     q(SB.from('fortalezas_oportunidades').select('*').eq('ciclo_id', cid)),
     q(SB.from('objetivos').select('*').eq('ciclo_id', cid)),
     q(SB.from('metas').select('*')), q(SB.from('indicadores').select('*')), q(SB.from('acciones').select('*'))
   ]);
   const pct = (n, t) => t ? Math.round(100 * n / t) : 0;
-  const filasAuto = [['Área', 'Proceso', 'Componente', 'Nivel acordado', 'Nivel', 'Justificación', 'Evidencias (título)', 'Evidencias (enlace)']];
+  const filasAuto = [['Área', 'Proceso', 'Componente', 'Nivel acordado', 'Nivel', 'Descripción de la evidencia']];
   const filasPlan = [['Área', 'Objetivo', 'Meta', 'Indicadores', 'Acción', 'Responsable', 'Inicio', 'Fin', 'Costo (COP)', 'Fuente', 'Avance %', 'Estado']];
   const filasEq = [['Área', 'Integrante', 'Líder']];
   const resumen = S.areas.map(a => {
     const cs = areaComps(a.id), ids = new Set(cs.map(c => c.id));
-    const cA = cons.filter(c => ids.has(c.componente_id)), eA = evid.filter(e => ids.has(e.componente_id));
-    const sinEv = cA.filter(c => c.nivel >= 3 && !eA.some(e => e.componente_id === c.componente_id)).length;
+    const cA = cons.filter(c => ids.has(c.componente_id)), conEv = cA.filter(c => (c.justificacion || '').trim()).length;
+    const sinEv = cA.filter(c => c.nivel >= 3 && !(c.justificacion || '').trim()).length;
     cs.forEach(c => {
-      const pr = S.procesos.find(x => x.id === c.proceso_id), con = cons.find(x => x.componente_id === c.id), ev = evid.filter(e => e.componente_id === c.id);
-      filasAuto.push([a.nombre, pr.nombre, c.nombre, con?.nivel || '', con ? NIV[con.nivel] : 'Sin definir', con?.justificacion || '', ev.map(e => e.titulo).join(' | '), ev.map(e => e.url || '').filter(Boolean).join(' | ')]);
+      const pr = S.procesos.find(x => x.id === c.proceso_id), con = cons.find(x => x.componente_id === c.id);
+      filasAuto.push([a.nombre, pr.nombre, c.nombre, con?.nivel || '', con ? NIV[con.nivel] : 'Sin definir', con?.justificacion || '']);
     });
     equipoDe(a.id).forEach(i => filasEq.push([a.nombre, i.nombre, i.es_lider ? 'Sí' : '']));
     const oA = objs.filter(o => o.area_id === a.id);
@@ -427,17 +498,17 @@ async function vReportes() {
     }));
     const aA = accs.filter(x => oA.some(o => metas.some(m => m.id === x.meta_id && m.objetivo_id === o.id)));
     const avance = aA.length ? Math.round(aA.reduce((t, x) => t + x.avance, 0) / aA.length) : 0;
-    return { a, n: cs.length, con: cA.length, ev: new Set(eA.map(e => e.componente_id)).size, sinEv, prio: fo.filter(f => f.area_id === a.id && f.tipo === 'oportunidad' && f.priorizada).length, obj: oA.length, acc: aA.length, avance };
+    return { a, n: cs.length, con: cA.length, ev: conEv, sinEv, prio: fo.filter(f => f.area_id === a.id && f.tipo === 'oportunidad' && f.priorizada).length, obj: oA.length, acc: aA.length, avance };
   });
   window.__rep = { filasAuto, filasPlan, filasEq };
   const detalle = S.areas.map(a => {
     const filas = filasAuto.filter(f => f[0] === a.nombre);
-    return `<section class="card"><h2>${esc(a.nombre)}</h2><div class="tw"><table><tr><th>Proceso</th><th>Componente</th><th>Nivel</th><th>Justificación</th><th>Evidencias</th></tr>${filas.map(f => `<tr><td>${esc(f[1])}</td><td>${esc(f[2])}</td><td>${f[3] ? badge(f[3]) : '<span class="muted">—</span>'}</td><td class="small">${esc(f[5])}</td><td class="small">${esc(f[6])}</td></tr>`).join('')}</table></div></section>`;
+    return `<section class="card"><h2>${esc(a.nombre)}</h2><div class="tw"><table><tr><th>Proceso</th><th>Componente</th><th>Nivel</th><th>Descripción de la evidencia</th></tr>${filas.map(f => `<tr><td>${esc(f[1])}</td><td>${esc(f[2])}</td><td>${f[3] ? badge(f[3]) : '<span class="muted">—</span>'}</td><td class="small">${esc(f[5])}</td></tr>`).join('')}</table></div></section>`;
   }).join('');
   return `${printHead('Reporte del proceso de autoevaluación')}<h1>Reportes</h1>
     <p class="muted">${esc(S.ciclo.nombre)} · estado actual de los cuatro equipos. Los equipos guardan su avance en la base de datos, así que pueden continuar en cualquier sesión.</p>
-    <div class="row noprint" style="margin-bottom:12px"><div class="fit"><button data-act="rep-auto">Descargar autoevaluación (CSV)</button></div><div class="fit"><button data-act="rep-plan">Descargar plan de mejoramiento (CSV)</button></div><div class="fit"><button data-act="rep-eq">Descargar equipos (CSV)</button></div><div class="fit"><button data-act="print">Imprimir / PDF</button></div></div>
-    <div class="card tw"><table><tr><th>Área</th><th>Niveles acordados</th><th>Con evidencia</th><th>Nivel 3–4 sin evidencia</th><th>Oportunidades priorizadas</th><th>Objetivo</th><th>Acciones</th><th>Avance</th></tr>
+    <div class="row noprint" style="margin-bottom:12px"><div class="fit"><button data-act="rep-auto">Descargar autoevaluación (CSV)</button></div><div class="fit"><button data-act="rep-plan">Descargar plan de mejoramiento (CSV)</button></div><div class="fit"><button data-act="rep-eq">Descargar equipos (CSV)</button></div><div class="fit"><button class="primary" data-act="gen-pdf" data-a="general">Generar informe general (PDF)</button></div></div>
+    <div class="card tw"><table><tr><th>Área</th><th>Niveles acordados</th><th>Con evidencia descrita</th><th>Nivel 3–4 sin describir</th><th>Oportunidades priorizadas</th><th>Objetivo</th><th>Acciones</th><th>Avance</th></tr>
     ${resumen.map(r => `<tr><td>${esc(r.a.nombre)}</td><td>${r.con}/${r.n} (${pct(r.con, r.n)}%)</td><td>${r.ev}</td><td>${r.sinEv ? `<span class="badge bw">${r.sinEv}</span>` : 0}</td><td>${r.prio}</td><td>${r.obj ? 'Definido' : 'Pendiente'}</td><td>${r.acc}</td><td>${r.avance}%</td></tr>`).join('')}</table></div>
     ${detalle}`;
 }
@@ -465,15 +536,20 @@ const ACT = {
   async 'save-cons'(el) {
     const c = +el.dataset.c, n = +(document.querySelector(`input[name="n-${c}"]:checked`)?.value || 0); if (!n) return toast('Elige el nivel acordado', true);
     await q(SB.from('consensos').upsert({ ciclo_id: S.ciclo.id, componente_id: c, nivel: n, justificacion: val('cj-' + c), updated_at: new Date().toISOString() }, { onConflict: 'ciclo_id,componente_id' }));
-    toast('Consenso guardado'); await refresh(c);
+    toast('Nivel guardado'); await route();
+    if (!openNext(c)) toast('Todos los componentes de esta área tienen nivel acordado');
   },
   async 'del-cons'(el) { const c = +el.dataset.c; await q(SB.from('consensos').delete().eq('ciclo_id', S.ciclo.id).eq('componente_id', c)); await refresh(c); },
-  async 'add-ev'(el) {
-    const c = +el.dataset.c, t = val('et-' + c); if (!t) return toast('Escribe un título', true);
-    await q(SB.from('evidencias').insert({ ciclo_id: S.ciclo.id, componente_id: c, titulo: t, url: val('eu-' + c) || null, descripcion: val('ed-' + c) || null }));
-    toast('Evidencia agregada'); await refresh(c);
+  async 'ctx-save'(el) {
+    const id = el.dataset.id, t = val('ct-t-' + id); if (!t) return toast('Escribe el título', true);
+    const row = { titulo: t, categoria: val('ct-c-' + id), descripcion: val('ct-d-' + id) || null, fuente: val('ct-f-' + id) || null };
+    if (id === 'new') await q(SB.from('contexto_hallazgos').insert({ ...row, ciclo_id: S.ciclo.id })); else await q(SB.from('contexto_hallazgos').update(row).eq('id', +id));
+    toast('Contexto guardado'); route();
   },
-  async 'del-ev'(el) { const d = el.closest('details.comp'); await q(SB.from('evidencias').delete().eq('id', el.dataset.e)); await refresh(d && +d.id.replace('comp-', '')); },
+  async 'ctx-del'(el) { await q(SB.from('contexto_hallazgos').delete().eq('id', +el.dataset.id)); route(); },
+  'next-comp': () => { if (!openNext(null)) toast('No hay componentes sin definir'); },
+  'gen-pdf'(el) { S.autoPrint = true; location.hash = '#/informe/' + el.dataset.a; },
+  'volver'() { history.length > 1 ? history.back() : (location.hash = '#/inicio'); },
   async 'fo-from'(el) {
     const c = +el.dataset.c, comp = S.comps.find(x => x.id === c);
     await q(SB.from('fortalezas_oportunidades').insert({ ciclo_id: S.ciclo.id, area_id: areaOf(c), tipo: el.dataset.k, descripcion: comp.nombre, componentes_ids: [c] })); toast('Agregado'); route();
@@ -582,5 +658,11 @@ document.addEventListener('submit', async e => {
 });
 $('#salir').addEventListener('click', () => ACT.logout());
 $('#cicloSel').addEventListener('change', e => { S.ciclo = S.ciclos.find(c => c.id === +e.target.value); lsSet('cicloId', S.ciclo.id); route(); });
+document.head.insertAdjacentHTML('beforeend', `<style>
+.informe h2{margin-top:1.4rem;border-bottom:2px solid var(--brand);padding-bottom:.2rem}.informe h3{margin:1rem 0 .3rem;font-size:1rem}
+.informe table{margin:.4rem 0}.informe tr{break-inside:avoid}
+@media print{.pb{break-before:page}body{font-size:11px}.badge,td.l1,td.l2,td.l3,td.l4,.bar>i{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+#cicloSel,.userbox,#nav,#toast{display:none!important}.informe{max-width:none}main{padding:0}}
+</style>`);
 renderFoot();
 boot();
