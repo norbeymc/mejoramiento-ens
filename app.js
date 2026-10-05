@@ -12,7 +12,7 @@ const S = { user: null, profile: null, miembros: [], ciclos: [], ciclo: null, ar
 const INST = {
   nombre: 'Escuela Normal Superior San Bernardo',
   nombreLegal: 'Institución Educativa Escuela Normal Superior',
-  lema: 'Educando para la vida con libertad y autonomía',
+  lema: 'Educando para la paz con libertad y autonomía',
   municipio: 'San Bernardo', departamento: 'Cundinamarca', provincia: 'Sumapaz',
   entidad: 'Secretaría de Educación de Cundinamarca', nucleo: '100',
   dane: '125649000015', icfes: '00911-8', nit: '',
