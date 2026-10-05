@@ -155,13 +155,13 @@ async function doAuth() {
 }
 
 /* ---------- router ---------- */
-const VIEWS = () => ({ inicio: vInicio, autoevaluacion: vAuto, perfil: vPerfil, oportunidades: vOpor, pmi: vPmi, seguimiento: vSeg, equipo: vEquipo });
-const NAV = [['inicio', 'Inicio'], ['autoevaluacion', '1 · Autoevaluación'], ['perfil', 'Perfil institucional'], ['oportunidades', 'Fortalezas y oportunidades'], ['pmi', '2 · Plan de mejoramiento'], ['seguimiento', '3 · Seguimiento'], ['equipo', 'Equipos']];
+const VIEWS = () => ({ inicio: vInicio, autoevaluacion: vAuto, perfil: vPerfil, oportunidades: vOpor, pmi: vPmi, seguimiento: vSeg, equipo: vEquipo, reportes: vReportes });
+const NAV = [['inicio', 'Inicio'], ['autoevaluacion', '1 · Autoevaluación'], ['perfil', 'Perfil institucional'], ['oportunidades', 'Fortalezas y oportunidades'], ['pmi', '2 · Plan de mejoramiento'], ['seguimiento', '3 · Seguimiento'], ['equipo', 'Equipos'], ['reportes', 'Reportes']];
 async function route() {
   if (!S.user || !S.profile?.activo) return;
   const [r, arg] = (location.hash || '#/inicio').slice(2).split('/');
-  const key = VIEWS()[r] ? r : 'inicio';
-  $('#nav').innerHTML = NAV.map(([k, t]) => `<a href="#/${k}" class="${k === key ? 'on' : ''}">${t}</a>`).join('');
+  const key = VIEWS()[r] && (r !== 'reportes' || isAdmin()) ? r : 'inicio';
+  $('#nav').innerHTML = NAV.filter(([k]) => k !== 'reportes' || isAdmin()).map(([k, t]) => `<a href="#/${k}" class="${k === key ? 'on' : ''}">${t}</a>`).join('');
   $('#app').innerHTML = '<p class="muted">Cargando…</p>';
   if (!S.ciclo && key !== 'equipo') { $('#app').innerHTML = '<div class="note">No hay ciclos creados. Un administrador debe crear uno en “Equipos”.</div>'; return; }
   try { $('#app').innerHTML = await VIEWS()[key](arg); window.scrollTo(0, 0); }
@@ -392,9 +392,62 @@ async function vEquipo() {
     ${adm ? `<h3 style="margin-top:14px">Nuevo ciclo</h3><div class="row"><div><label>Nombre</label><input id="ci-n" placeholder="Ruta de mejoramiento 2027"></div><div class="fit"><label>Año</label><input id="ci-a" type="number" value="${(S.ciclos[0]?.anio || 2025) + 1}"></div><div class="fit"><button class="primary" data-act="add-ciclo">Crear ciclo</button></div></div>` : '<p class="small muted">Solo el administrador cambia la etapa del ciclo.</p>'}</div>`;
 }
 
+/* ---------- REPORTES (administrador) ---------- */
+const csvCell = x => `"${String(x ?? '').replace(/"/g, '""')}"`;
+function csvDown(nombre, filas) {
+  const txt = '﻿' + filas.map(f => f.map(csvCell).join(';')).join('\n');
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([txt], { type: 'text/csv;charset=utf-8' })); a.download = nombre; a.click();
+}
+async function vReportes() {
+  const cid = S.ciclo.id;
+  const [cons, evid, fo, objs, metas, inds, accs] = await Promise.all([
+    q(SB.from('consensos').select('*').eq('ciclo_id', cid)),
+    q(SB.from('evidencias').select('*').eq('ciclo_id', cid)),
+    q(SB.from('fortalezas_oportunidades').select('*').eq('ciclo_id', cid)),
+    q(SB.from('objetivos').select('*').eq('ciclo_id', cid)),
+    q(SB.from('metas').select('*')), q(SB.from('indicadores').select('*')), q(SB.from('acciones').select('*'))
+  ]);
+  const pct = (n, t) => t ? Math.round(100 * n / t) : 0;
+  const filasAuto = [['Área', 'Proceso', 'Componente', 'Nivel acordado', 'Nivel', 'Justificación', 'Evidencias (título)', 'Evidencias (enlace)']];
+  const filasPlan = [['Área', 'Objetivo', 'Meta', 'Indicadores', 'Acción', 'Responsable', 'Inicio', 'Fin', 'Costo (COP)', 'Fuente', 'Avance %', 'Estado']];
+  const filasEq = [['Área', 'Integrante', 'Líder']];
+  const resumen = S.areas.map(a => {
+    const cs = areaComps(a.id), ids = new Set(cs.map(c => c.id));
+    const cA = cons.filter(c => ids.has(c.componente_id)), eA = evid.filter(e => ids.has(e.componente_id));
+    const sinEv = cA.filter(c => c.nivel >= 3 && !eA.some(e => e.componente_id === c.componente_id)).length;
+    cs.forEach(c => {
+      const pr = S.procesos.find(x => x.id === c.proceso_id), con = cons.find(x => x.componente_id === c.id), ev = evid.filter(e => e.componente_id === c.id);
+      filasAuto.push([a.nombre, pr.nombre, c.nombre, con?.nivel || '', con ? NIV[con.nivel] : 'Sin definir', con?.justificacion || '', ev.map(e => e.titulo).join(' | '), ev.map(e => e.url || '').filter(Boolean).join(' | ')]);
+    });
+    equipoDe(a.id).forEach(i => filasEq.push([a.nombre, i.nombre, i.es_lider ? 'Sí' : '']));
+    const oA = objs.filter(o => o.area_id === a.id);
+    oA.forEach(o => metas.filter(m => m.objetivo_id === o.id).forEach(m => {
+      const mi = inds.filter(i => i.meta_id === m.id).map(i => i.nombre).join(' | '), ma = accs.filter(x => x.meta_id === m.id);
+      (ma.length ? ma : [null]).forEach(x => filasPlan.push([a.nombre, o.texto, m.texto, mi, x?.descripcion || '', x?.responsable_texto || '', x?.fecha_inicio || '', x?.fecha_fin || '', x?.costo ?? '', x?.fuente_financiacion || '', x?.avance ?? '', x?.estado || '']));
+    }));
+    const aA = accs.filter(x => oA.some(o => metas.some(m => m.id === x.meta_id && m.objetivo_id === o.id)));
+    const avance = aA.length ? Math.round(aA.reduce((t, x) => t + x.avance, 0) / aA.length) : 0;
+    return { a, n: cs.length, con: cA.length, ev: new Set(eA.map(e => e.componente_id)).size, sinEv, prio: fo.filter(f => f.area_id === a.id && f.tipo === 'oportunidad' && f.priorizada).length, obj: oA.length, acc: aA.length, avance };
+  });
+  window.__rep = { filasAuto, filasPlan, filasEq };
+  const detalle = S.areas.map(a => {
+    const filas = filasAuto.filter(f => f[0] === a.nombre);
+    return `<section class="card"><h2>${esc(a.nombre)}</h2><div class="tw"><table><tr><th>Proceso</th><th>Componente</th><th>Nivel</th><th>Justificación</th><th>Evidencias</th></tr>${filas.map(f => `<tr><td>${esc(f[1])}</td><td>${esc(f[2])}</td><td>${f[3] ? badge(f[3]) : '<span class="muted">—</span>'}</td><td class="small">${esc(f[5])}</td><td class="small">${esc(f[6])}</td></tr>`).join('')}</table></div></section>`;
+  }).join('');
+  return `${printHead('Reporte del proceso de autoevaluación')}<h1>Reportes</h1>
+    <p class="muted">${esc(S.ciclo.nombre)} · estado actual de los cuatro equipos. Los equipos guardan su avance en la base de datos, así que pueden continuar en cualquier sesión.</p>
+    <div class="row noprint" style="margin-bottom:12px"><div class="fit"><button data-act="rep-auto">Descargar autoevaluación (CSV)</button></div><div class="fit"><button data-act="rep-plan">Descargar plan de mejoramiento (CSV)</button></div><div class="fit"><button data-act="rep-eq">Descargar equipos (CSV)</button></div><div class="fit"><button data-act="print">Imprimir / PDF</button></div></div>
+    <div class="card tw"><table><tr><th>Área</th><th>Niveles acordados</th><th>Con evidencia</th><th>Nivel 3–4 sin evidencia</th><th>Oportunidades priorizadas</th><th>Objetivo</th><th>Acciones</th><th>Avance</th></tr>
+    ${resumen.map(r => `<tr><td>${esc(r.a.nombre)}</td><td>${r.con}/${r.n} (${pct(r.con, r.n)}%)</td><td>${r.ev}</td><td>${r.sinEv ? `<span class="badge bw">${r.sinEv}</span>` : 0}</td><td>${r.prio}</td><td>${r.obj ? 'Definido' : 'Pendiente'}</td><td>${r.acc}</td><td>${r.avance}%</td></tr>`).join('')}</table></div>
+    ${detalle}`;
+}
+
 /* ---------- acciones ---------- */
 const ACT = {
   'admin-login': () => showAuth(),
+  'rep-auto': () => csvDown(`autoevaluacion-${S.ciclo.anio}.csv`, window.__rep.filasAuto),
+  'rep-plan': () => csvDown(`plan-mejoramiento-${S.ciclo.anio}.csv`, window.__rep.filasPlan),
+  'rep-eq': () => csvDown(`equipos-${S.ciclo.anio}.csv`, window.__rep.filasEq),
   async 'su-go'() {
     const area = +val('su-area'), msg = $('#a-msg'); msg.innerHTML = '';
     const nombres = val('su-nom').split('\n').map(x => x.trim()).filter(Boolean), lider = document.querySelector('input[name="su-lider"]:checked')?.value;
