@@ -156,12 +156,13 @@ async function doAuth() {
 
 /* ---------- router ---------- */
 const VIEWS = () => ({ inicio: vInicio, autoevaluacion: vAuto, perfil: vPerfil, oportunidades: vOpor, pmi: vPmi, seguimiento: vSeg, equipo: vEquipo, reportes: vReportes, contexto: vContexto, informe: vInforme });
+const ADMIN_ONLY = ['reportes', 'contexto'];
 const NAV = [['inicio', 'Inicio'], ['contexto', 'Contexto'], ['autoevaluacion', '1 · Autoevaluación'], ['perfil', 'Perfil institucional'], ['oportunidades', 'Fortalezas y oportunidades'], ['pmi', '2 · Plan de mejoramiento'], ['seguimiento', '3 · Seguimiento'], ['equipo', 'Equipos'], ['reportes', 'Reportes']];
 async function route() {
   if (!S.user || !S.profile?.activo) return;
   const [r, arg] = (location.hash || '#/inicio').slice(2).split('/');
-  const key = VIEWS()[r] && (r !== 'reportes' || isAdmin()) ? r : 'inicio';
-  $('#nav').innerHTML = NAV.filter(([k]) => k !== 'reportes' || isAdmin()).map(([k, t]) => `<a href="#/${k}" class="${k === key ? 'on' : ''}">${t}</a>`).join('');
+  const key = VIEWS()[r] && (!ADMIN_ONLY.includes(r) || isAdmin()) ? r : 'inicio';
+  $('#nav').innerHTML = NAV.filter(([k]) => !ADMIN_ONLY.includes(k) || isAdmin()).map(([k, t]) => `<a href="#/${k}" class="${k === key ? 'on' : ''}">${t}</a>`).join('');
   $('#app').innerHTML = '<p class="muted">Cargando…</p>';
   if (!S.ciclo && key !== 'equipo') { $('#app').innerHTML = '<div class="note">No hay ciclos creados. Un administrador debe crear uno en “Equipos”.</div>'; return; }
   try { $('#app').innerHTML = await VIEWS()[key](arg); window.scrollTo(0, 0); }
@@ -407,7 +408,7 @@ async function vEquipo() {
 const CAT = { institucional: 'Institucional', social: 'Social', economica: 'Económico', cultural: 'Cultural', ambiental: 'Ambiental', pedagogica: 'Pedagógico', otra: 'Otro' };
 async function vContexto() {
   const items = await q(SB.from('contexto_hallazgos').select('*').eq('ciclo_id', S.ciclo.id).order('id'));
-  const canEdit = isAdmin() || S.miembros.some(m => m.user_id === S.user.id);
+  const canEdit = isAdmin();
   const catSel = id => `<select id="ct-c-${id}">${Object.entries(CAT).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select>`;
   const form = (id, it) => `<div class="row"><div><label>Título</label><input id="ct-t-${id}" value="${esc(it?.titulo)}"></div><div class="fit"><label>Categoría</label>${catSel(id).replace(`value="${it?.categoria}"`, `value="${it?.categoria}" selected`)}</div></div>
     <label>Descripción</label><textarea id="ct-d-${id}" style="min-height:90px">${esc(it?.descripcion)}</textarea><label>Fuente</label><input id="ct-f-${id}" value="${esc(it?.fuente)}">
