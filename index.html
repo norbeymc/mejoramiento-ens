@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mejoramiento institucional · ENS San Bernardo</title>
+<meta name="description" content="Autoevaluación y plan de mejoramiento institucional (Guía 34 MEN) para los cuatro equipos de gestión.">
+<style>
+:root{
+  --bg:#f6f5f1; --surface:#ffffff; --ink:#1b2a41; --muted:#5b6778; --line:#dcd9d0;
+  --brand:#0b5d63; --brand-ink:#ffffff; --brand-soft:#e1efef;
+  --n1:#b42318; --n1s:#fde8e6; --n2:#a15c07; --n2s:#fbefd9; --n3:#175d8f; --n3s:#e0eef8; --n4:#0a6b43; --n4s:#dff2e8;
+  --warn:#8a5a00; --warns:#fff3d6; --err:#b42318;
+  --radius:10px;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#10161f; --surface:#18212d; --ink:#e8edf3; --muted:#9aa7b7; --line:#2b3748;
+    --brand:#4fb3b8; --brand-ink:#0b1a1c; --brand-soft:#173236;
+    --n1:#ff8a7e; --n1s:#3a1c19; --n2:#f0b45a; --n2s:#382a12; --n3:#7cc0f0; --n3s:#12293b; --n4:#6fd3a0; --n4s:#12301f;
+    --warn:#f0c46a; --warns:#33290f; --err:#ff8a7e;
+  }
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+h1,h2,h3{line-height:1.2;margin:0 0 .5rem}
+h1{font-size:1.6rem} h2{font-size:1.25rem} h3{font-size:1.05rem}
+a{color:var(--brand)}
+.muted{color:var(--muted)} .small{font-size:.875rem}
+header.top{background:var(--surface);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:10}
+.top-in{max-width:1200px;margin:0 auto;padding:.6rem 16px;display:flex;gap:1rem;align-items:center;flex-wrap:wrap}
+.brand{font-weight:700;color:var(--brand);text-decoration:none;white-space:nowrap}
+nav.main{display:flex;gap:.25rem;overflow-x:auto;flex:1}
+nav.main a{padding:.4rem .7rem;border-radius:8px;text-decoration:none;color:var(--ink);white-space:nowrap;font-size:.95rem}
+nav.main a.on{background:var(--brand-soft);color:var(--brand);font-weight:600}
+.userbox{display:flex;gap:.5rem;align-items:center;font-size:.875rem}
+main{max-width:1200px;margin:0 auto;padding:20px 16px 80px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:16px;margin-bottom:14px}
+.grid{display:grid;gap:14px}
+.g2{grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
+.g4{grid-template-columns:repeat(auto-fit,minmax(250px,1fr))}
+button,.btn{font:inherit;padding:.5rem .9rem;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer;min-height:40px}
+button.primary{background:var(--brand);color:var(--brand-ink);border-color:var(--brand);font-weight:600}
+button.danger{color:var(--err)}
+button.ghost{border-color:transparent;background:transparent;color:var(--brand)}
+button:disabled{opacity:.5;cursor:not-allowed}
+input,select,textarea{font:inherit;width:100%;padding:.5rem .6rem;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink)}
+textarea{min-height:76px;resize:vertical}
+label{display:block;font-size:.875rem;font-weight:600;margin:.6rem 0 .2rem}
+.row{display:flex;gap:.6rem;flex-wrap:wrap;align-items:flex-end}
+.row>*{flex:1 1 160px}
+.row>.fit{flex:0 0 auto}
+.tabs{display:flex;gap:.4rem;flex-wrap:wrap;margin:0 0 14px}
+.tabs a{padding:.45rem .8rem;border:1px solid var(--line);border-radius:999px;text-decoration:none;color:var(--ink);background:var(--surface);font-size:.9rem}
+.tabs a.on{background:var(--brand);color:var(--brand-ink);border-color:var(--brand)}
+.badge{display:inline-block;padding:.1rem .55rem;border-radius:999px;font-size:.78rem;font-weight:600;border:1px solid transparent;white-space:nowrap}
+.b1{background:var(--n1s);color:var(--n1)} .b2{background:var(--n2s);color:var(--n2)} .b3{background:var(--n3s);color:var(--n3)} .b4{background:var(--n4s);color:var(--n4)}
+.b0{background:var(--bg);color:var(--muted);border-color:var(--line)}
+.bw{background:var(--warns);color:var(--warn)}
+.bar{height:8px;background:var(--line);border-radius:99px;overflow:hidden}
+.bar>i{display:block;height:100%;background:var(--brand)}
+details.comp{border:1px solid var(--line);border-radius:var(--radius);margin:8px 0;background:var(--surface)}
+details.comp>summary{cursor:pointer;padding:12px 14px;list-style:none;display:flex;gap:.6rem;align-items:center;justify-content:space-between}
+details.comp>summary::-webkit-details-marker{display:none}
+details.comp>summary .t{flex:1}
+details.comp[open]>summary{border-bottom:1px solid var(--line)}
+.comp-body{padding:14px}
+.opts{display:grid;gap:8px}
+.opt{display:flex;gap:10px;align-items:flex-start;border:1px solid var(--line);border-radius:8px;padding:10px;cursor:pointer}
+.opt input{width:auto;margin-top:.25rem}
+.opt.sel{border-color:var(--brand);background:var(--brand-soft)}
+.opt b{display:block;font-size:.85rem}
+.opt span{font-size:.9rem}
+table{border-collapse:collapse;width:100%;font-size:.9rem}
+th,td{border:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}
+th{background:var(--bg)}
+.tw{overflow-x:auto}
+td.c{text-align:center;width:46px}
+td.l1{background:var(--n1s)} td.l2{background:var(--n2s)} td.l3{background:var(--n3s)} td.l4{background:var(--n4s)}
+tr.tot td{font-weight:700;background:var(--bg)}
+.err{background:var(--n1s);color:var(--n1);padding:10px 12px;border-radius:8px}
+.note{background:var(--warns);color:var(--warn);padding:10px 12px;border-radius:8px;margin:8px 0;font-size:.9rem}
+.ok{background:var(--n4s);color:var(--n4);padding:10px 12px;border-radius:8px}
+#toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:.6rem 1rem;border-radius:8px;opacity:0;pointer-events:none;transition:opacity .2s;z-index:50;max-width:90vw}
+#toast.show{opacity:1}
+.auth{max-width:420px;margin:8vh auto;padding:0 16px}
+.gantt td{height:18px;padding:0;width:6.5%}
+.gantt td.on{background:var(--brand)}
+.sem{display:inline-block;width:12px;height:12px;border-radius:50%;margin-right:4px;vertical-align:middle}
+.sem.verde{background:var(--n4)} .sem.amarillo{background:var(--n2)} .sem.rojo{background:var(--n1)}
+.kpi{font-size:1.6rem;font-weight:700}
+.list{list-style:none;margin:0;padding:0}
+.list li{padding:8px 0;border-bottom:1px solid var(--line)}
+.list li:last-child{border-bottom:0}
+.sub{margin-left:14px;padding-left:12px;border-left:3px solid var(--line)}
+@media print{
+  header.top,.noprint,.tabs,button{display:none!important}
+  body{background:#fff;color:#000} .card{border:0;padding:0}
+}
+</style>
+</head>
+<body>
+<header class="top" id="top" hidden>
+  <div class="top-in">
+    <a class="brand" href="#/inicio">Mejoramiento ENS</a>
+    <nav class="main" id="nav"></nav>
+    <div class="userbox"><select id="cicloSel" aria-label="Ciclo" style="width:auto"></select><span id="who" class="muted"></span><button id="salir">Salir</button></div>
+  </div>
+</header>
+<main id="app"><p class="muted">Cargando…</p></main>
+<div id="toast" role="status"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="app.js"></script>
+</body>
+</html>
