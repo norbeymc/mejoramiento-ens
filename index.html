@@ -4,11 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Mejoramiento institucional · ENS San Bernardo</title>
+<link rel="icon" type="image/png" href="favicon.png">
 <meta name="description" content="Autoevaluación y plan de mejoramiento institucional (Guía 34 MEN) para los cuatro equipos de gestión.">
 <style>
 :root{
   --bg:#f6f5f1; --surface:#ffffff; --ink:#1b2a41; --muted:#5b6778; --line:#dcd9d0;
-  --brand:#0b5d63; --brand-ink:#ffffff; --brand-soft:#e1efef;
+  --brand:#2b5f12; --brand-ink:#ffffff; --brand-soft:#e5efdc;
   --n1:#b42318; --n1s:#fde8e6; --n2:#a15c07; --n2s:#fbefd9; --n3:#175d8f; --n3s:#e0eef8; --n4:#0a6b43; --n4s:#dff2e8;
   --warn:#8a5a00; --warns:#fff3d6; --err:#b42318;
   --radius:10px;
@@ -16,7 +17,7 @@
 @media (prefers-color-scheme:dark){
   :root:not([data-theme="light"]){
     --bg:#10161f; --surface:#18212d; --ink:#e8edf3; --muted:#9aa7b7; --line:#2b3748;
-    --brand:#4fb3b8; --brand-ink:#0b1a1c; --brand-soft:#173236;
+    --brand:#8fcf6a; --brand-ink:#10200a; --brand-soft:#1d2e17;
     --n1:#ff8a7e; --n1s:#3a1c19; --n2:#f0b45a; --n2s:#382a12; --n3:#7cc0f0; --n3s:#12293b; --n4:#6fd3a0; --n4s:#12301f;
     --warn:#f0c46a; --warns:#33290f; --err:#ff8a7e;
   }
@@ -85,7 +86,8 @@ tr.tot td{font-weight:700;background:var(--bg)}
 .ok{background:var(--n4s);color:var(--n4);padding:10px 12px;border-radius:8px}
 #toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:.6rem 1rem;border-radius:8px;opacity:0;pointer-events:none;transition:opacity .2s;z-index:50;max-width:90vw}
 #toast.show{opacity:1}
-.auth{max-width:420px;margin:8vh auto;padding:0 16px}
+.auth{max-width:420px;width:calc(100% - 32px);margin:6vh auto}
+.auth.card{padding:24px 20px}
 .gantt td{height:18px;padding:0;width:6.5%}
 .gantt td.on{background:var(--brand)}
 .sem{display:inline-block;width:12px;height:12px;border-radius:50%;margin-right:4px;vertical-align:middle}
@@ -95,6 +97,22 @@ tr.tot td{font-weight:700;background:var(--bg)}
 .list li{padding:8px 0;border-bottom:1px solid var(--line)}
 .list li:last-child{border-bottom:0}
 .sub{margin-left:14px;padding-left:12px;border-left:3px solid var(--line)}
+
+.flag{height:4px;background:linear-gradient(90deg,#e3b92b 0 50%,#1f4fc4 50% 75%,#d62828 75% 100%)}
+.brand{display:flex;align-items:center;gap:.5rem}
+.brand img{height:40px;width:auto}
+.brand span small{display:block;font-weight:400;font-size:.7rem;color:var(--muted);line-height:1.1}
+footer.inst{max-width:1200px;margin:0 auto;padding:18px 16px 40px;border-top:1px solid var(--line);color:var(--muted);font-size:.85rem;display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+footer.inst img{height:56px;width:auto}
+footer.inst b{color:var(--ink)}
+.printonly{display:none}
+.authlogo{display:block;margin:0 auto 10px;height:120px;width:auto}
+.auth h1,.auth .lema{text-align:center}
+@media print{
+  .printonly{display:flex!important;gap:14px;align-items:center;border-bottom:2px solid #000;padding-bottom:8px;margin-bottom:14px}
+  .printonly img{height:70px;width:auto}
+  footer.inst,.flag{display:none!important}
+}
 @media print{
   header.top,.noprint,.tabs,button{display:none!important}
   body{background:#fff;color:#000} .card{border:0;padding:0}
@@ -103,13 +121,15 @@ tr.tot td{font-weight:700;background:var(--bg)}
 </head>
 <body>
 <header class="top" id="top" hidden>
+  <div class="flag"></div>
   <div class="top-in">
-    <a class="brand" href="#/inicio">Mejoramiento ENS</a>
+    <a class="brand" href="#/inicio"><img src="logo.png" alt="Escudo ENS San Bernardo"><span>Mejoramiento<small>ENS San Bernardo</small></span></a>
     <nav class="main" id="nav"></nav>
     <div class="userbox"><select id="cicloSel" aria-label="Ciclo" style="width:auto"></select><span id="who" class="muted"></span><button id="salir">Salir</button></div>
   </div>
 </header>
 <main id="app"><p class="muted">Cargando…</p></main>
+<footer class="inst" id="foot"></footer>
 <div id="toast" role="status"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="app.js"></script>
